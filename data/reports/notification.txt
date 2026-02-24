@@ -1,11 +1,11 @@
 
 ✅ MOMENT Data Pipeline – Complete
 ==================================================
-Time: 2026-02-24 22:22:30
+Time: 2026-02-24 23:09:58
 
 Preprocessing: {'moments': 450, 'books': 6, 'users': 50, 'valid': 450}
 Validation: PASSED
-GCS Upload: 0 files uploaded
+GCS Upload: 3 files uploaded
 Failed Tasks: None
 
 Pipeline: acquire → bias → preprocess → [schema + validate] → upload → notify
