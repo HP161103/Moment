@@ -1,7 +1,7 @@
 # Moment — Data Pipeline
 
 > **Read. Moments. Worth. Sharing.**
-> DADS7305 / IE7305 · MLOps · Group 23 · Northeastern University
+> IE7374 · MLOps · Group 23 · Northeastern University
 
 Moment is a private reading platform that uses machine learning to match intellectually compatible readers. Users capture book passages as visual "moments," write personal reflections, and are quietly matched with readers who think and feel similarly about literature — without performative social media posting.
 
@@ -36,7 +36,7 @@ This repository contains the **Data Pipeline (Assignment 1)**. It implements eve
 
 ## 1. Repository Structure
 
-Organised following the folder structure from the assignment guidelines, and modelled after production open-source Python projects such as [scikit-learn](https://github.com/scikit-learn/scikit-learn).
+Organised following the folder structure from the assignment guidelines, modelled after production open-source Python projects such as [scikit-learn](https://github.com/scikit-learn/scikit-learn).
 
 ```
 Moment/                                      ← Project Root
@@ -44,8 +44,8 @@ Moment/                                      ← Project Root
 ├── data_pipeline/                           ← Main pipeline directory
 │   │
 │   ├── dags/                                ← Airflow DAGs
-│   │   ├── data_pipeline_dag.py             ← Main pipeline DAG
-│   │   └── tests_dag.py                     ← DAG that runs pytest suite
+│   │   ├── data_pipeline_dag.py             ← Main pipeline DAG (moment_data_pipeline)
+│   │   └── tests_dag.py                     ← Tests DAG (moment_pipeline_tests)
 │   │
 │   ├── data/                                ← All data files
 │   │   ├── raw/
@@ -79,9 +79,9 @@ Moment/                                      ← Project Root
 │   │   │   ├── moments_processed.json
 │   │   │   └── users_processed.json
 │   │   └── reports/                         ← DVC-tracked pipeline reports
-│   │       ├── bias_report_FINAL.md         ← Bias findings + trade-offs
-│   │       ├── schema_stats.json            ← TFDV statistics
-│   │       ├── validation_report.json       ← TFDV validation results
+│   │       ├── bias_report_FINAL.md
+│   │       ├── schema_stats.json
+│   │       ├── validation_report.json
 │   │       └── notification.txt             ← Anomaly alert log
 │   │
 │   ├── scripts/                             ← One script per pipeline stage
@@ -98,7 +98,7 @@ Moment/                                      ← Project Root
 │   │   ├── run.py                           ← Runs all stages in sequence
 │   │   └── utils.py                         ← Shared utilities
 │   │
-│   ├── tests/                               ← All unit and integration tests
+│   ├── tests/                               ← Unit and integration tests
 │   │   ├── test_acquisition.py
 │   │   ├── test_preprocessing.py
 │   │   ├── test_validation.py
@@ -154,7 +154,7 @@ Moment/                                      ← Project Root
 └── requirements.txt                         ← All dependencies, version-pinned
 ```
 
-> **`data_pipeline/logs/`** is created automatically on first run. It is excluded from Git via `.gitignore` but the directory is committed with `.gitkeep` so it always exists on a fresh clone.
+> **`data_pipeline/logs/`** is created automatically on first run. Excluded from Git via `.gitignore` but committed with `.gitkeep` so it always exists on a fresh clone.
 
 ---
 
@@ -168,7 +168,7 @@ Moment's core privacy principle is that user interpretations never leave the loc
 
 | Property | Value |
 |---|---|
-| Final dataset file | `data_pipeline/data/raw/csvs_jsons/all_interpretations_450_FINAL_NO_BIAS.json` |
+| Final dataset | `data_pipeline/data/raw/csvs_jsons/all_interpretations_450_FINAL_NO_BIAS.json` |
 | Total interpretations | 450 |
 | Character personas | 50 |
 | Books | 3 — *Frankenstein*, *Pride & Prejudice*, *The Great Gatsby* |
@@ -176,8 +176,6 @@ Moment's core privacy principle is that user interpretations never leave the loc
 | Format | JSON |
 
 ### Source PDFs
-
-All 9 passage PDFs are committed to the repository under `data_pipeline/data/raw/pdfs/`:
 
 | Book | Author | Year |
 |---|---|---|
@@ -191,59 +189,45 @@ All books are public domain (pre-1928), sourced from [Project Gutenberg](https:/
 
 ## 3. Pipeline Architecture
 
-Schema statistics generation and anomaly detection run **in parallel** after validation — a bottleneck identified via Airflow Gantt (see [Section 12](#12-airflow-dags--gantt-optimization)).
+`validation` and `schema_stats` run in parallel after `preprocessing` — a bottleneck identified via the Airflow Gantt chart (see [Section 12](#12-airflow-dags--gantt-optimization)).
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│               DATA ACQUISITION                           │
+│               acquire_data                               │
 │  data/character_extraction.py                            │
 │  data/data_extraction.py                                 │
-│  data_pipeline/scripts/data_acquisition.py               │
+│  scripts/data_acquisition.py                             │
 └─────────────────────┬────────────────────────────────────┘
                       │
 ┌─────────────────────▼────────────────────────────────────┐
-│               PREPROCESSING                              │
+│               bias_detection                             │
+│  scripts/bias_detection.py                               │
+│  bias_detection/bias_detection.py                        │
+└─────────────────────┬────────────────────────────────────┘
+                      │
+┌─────────────────────▼────────────────────────────────────┐
+│               preprocessing                              │
 │  scripts/preprocessor.py                                 │
 │  preprocessing/pipeline/preprocessor.py                  │
-└─────────────────────┬────────────────────────────────────┘
-                      │
-┌─────────────────────▼────────────────────────────────────┐
-│               FEATURE ENGINEERING                        │
-│  scripts/feature_engineering.py                          │
-└─────────────────────┬────────────────────────────────────┘
-                      │
-┌─────────────────────▼────────────────────────────────────┐
-│               VALIDATION                                 │
-│  scripts/validation.py + config/schema.yaml              │
 └──────────┬──────────────────────────┬────────────────────┘
            │ (parallel)               │ (parallel)
 ┌──────────▼──────────┐   ┌───────────▼──────────────────┐
-│  SCHEMA & STATS     │   │   ANOMALY DETECTION          │
-│  generate_schema    │   │   scripts/anomalies.py       │
-│  _stats.py (TFDV)   │   │   preprocessing/anomalies.py │
-│  → schema_stats.json│   │   IQR · Z-score · TF-IDF     │
-│  → validation_report│   │   → notification.txt (alert) │
+│     validation      │   │       schema_stats           │
+│  scripts/           │   │  scripts/generate_schema     │
+│  validation.py      │   │  _stats.py (TFDV)            │
+│  + schema.yaml      │   │  → schema_stats.json         │
 └──────────┬──────────┘   └───────────┬──────────────────┘
            └──────────────┬───────────┘
                           │
 ┌─────────────────────────▼────────────────────────────────┐
-│               BIAS DETECTION                             │
-│  scripts/bias_detection.py                               │
-│  bias_detection/bias_detection.py                        │
-│  Pandas data slicing across demographic subgroups        │
-│  → data/reports/bias_report_FINAL.md                     │
+│               upload_to_gcs                              │
+│  Uploads validated data and reports to GCS               │
 └─────────────────────┬────────────────────────────────────┘
                       │
 ┌─────────────────────▼────────────────────────────────────┐
-│               REPORT GENERATION                          │
-│  scripts/generate_html_report.py                         │
-│  scripts/generate_enhanced_dashboard.py                  │
-└─────────────────────┬────────────────────────────────────┘
-                      │
-┌─────────────────────▼────────────────────────────────────┐
-│               DVC VERSIONING                             │
-│  dvc.yaml — versions processed/ + reports/               │
-│  .dvc pointer files committed to Git                     │
+│               notify                                     │
+│  Sends pipeline completion notification                  │
+│  → anomaly alerts via notification.txt + logging         │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -285,7 +269,7 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-All packages are version-pinned. Key packages:
+Key packages:
 
 | Package | Purpose |
 |---|---|
@@ -316,7 +300,7 @@ docker-compose down               # stop when done
 dvc pull
 ```
 
-> If no remote is configured, skip this — run the pipeline directly and it will regenerate all data from the source PDFs in the repository.
+> If no remote is configured, skip this — run the pipeline directly and it regenerates all data from source PDFs in the repository.
 
 ---
 
@@ -328,7 +312,7 @@ dvc pull
 2. Find `moment_data_pipeline` → toggle **on**
 3. Click **▶ Trigger DAG**
 4. Watch progress in **Graph View**
-5. Open **Gantt** tab to see per-task timing
+5. Open **Gantt** tab to inspect per-task timing
 
 ### Option B — Runner Script (No Docker)
 
@@ -347,12 +331,10 @@ python run.py
 
 ```bash
 python data_pipeline/scripts/data_acquisition.py
-python data_pipeline/scripts/preprocessor.py
-python data_pipeline/scripts/feature_engineering.py
-python data_pipeline/scripts/validation.py
-python data_pipeline/scripts/generate_schema_stats.py   # parallel with anomalies
-python data_pipeline/scripts/anomalies.py               # parallel with schema stats
 python data_pipeline/scripts/bias_detection.py
+python data_pipeline/scripts/preprocessor.py
+python data_pipeline/scripts/validation.py           # parallel with schema_stats
+python data_pipeline/scripts/generate_schema_stats.py # parallel with validation
 python data_pipeline/scripts/generate_html_report.py
 python data_pipeline/scripts/generate_enhanced_dashboard.py
 ```
@@ -361,13 +343,13 @@ python data_pipeline/scripts/generate_enhanced_dashboard.py
 
 ## 6. Data Acquisition
 
-**Requirement:** *"Write code to download or fetch data from necessary sources. Ensure reproducible. Specify dependencies in requirements.txt."*
+**Requirement:** *"Write code to download or fetch data. Reproducible. Dependencies in requirements.txt."*
 
 **Scripts:**
 
-- `data/character_extraction.py` — Parses `0.Character traits - 50.pdf` and extracts all 50 character persona definitions into `characters.csv`
-- `data/data_extraction.py` — Extracts passage text from the 9 book PDFs, pairs passages with personas, and generates synthetic interpretations into `interpretations.json` and `passages.csv`
-- `data/remove_new_lines.py` — Cleans newline artefacts introduced during PDF text extraction
+- `data/character_extraction.py` — Parses `0.Character traits - 50.pdf`, extracts all 50 character persona definitions into `characters.csv`
+- `data/data_extraction.py` — Extracts passage text from the 9 book PDFs, pairs passages with personas, generates synthetic interpretations into `interpretations.json` and `passages.csv`
+- `data/remove_new_lines.py` — Cleans newline artefacts from PDF text extraction
 - `data_pipeline/scripts/data_acquisition.py` — Pipeline-stage wrapper that calls the above in sequence, validates all expected outputs exist, and logs results
 
 All 9 source PDFs are committed to `data_pipeline/data/raw/pdfs/` so acquisition runs identically on any machine with no external dependencies beyond `requirements.txt`.
@@ -376,11 +358,11 @@ All 9 source PDFs are committed to `data_pipeline/data/raw/pdfs/` so acquisition
 
 ## 7. Data Preprocessing
 
-**Requirement:** *"Clear steps for data cleaning, transformation, and feature engineering. Modular and reusable."*
+**Requirement:** *"Clear steps for data cleaning, transformation, feature engineering. Modular and reusable."*
 
 **Scripts:** `data_pipeline/scripts/preprocessor.py` · `data_pipeline/preprocessing/pipeline/preprocessor.py`
 
-Each step below is an independent, reusable function — nothing is bundled together. Any step can be adjusted or replaced without affecting others. All thresholds are in `config/preprocessing_config.yaml`, not hardcoded.
+Each step is an independent, reusable function. All thresholds are in `config/preprocessing_config.yaml`, not hardcoded.
 
 | Step | What It Does |
 |---|---|
@@ -402,7 +384,7 @@ Each step below is an independent, reusable function — nothing is bundled toge
 | Feature | Method |
 |---|---|
 | Interpretation length | Character count and word count per interpretation |
-| Thematic tags | Keyword matching against predefined theme vocabulary (isolation, ambition, identity, class, morality, etc.) |
+| Thematic tags | Keyword matching against predefined theme vocabulary |
 | Emotional tone | Rule-based classification (melancholy, optimistic, critical, reflective, etc.) |
 | Reading style encoding | 5 reading style categories mapped to integer codes |
 | Demographic encoding | Age group, gender, occupation encoded as categorical features |
@@ -413,7 +395,7 @@ All features are appended to existing records — original text is always preser
 
 ## 9. Schema & Statistics Generation — TFDV
 
-**Requirement:** *"Automate schema and statistics generation using MLMD, TFDV, or similar. Validate schema and data quality over time."*
+**Requirement:** *"Automate schema and statistics using MLMD, TFDV, or similar."*
 **Evaluation Criterion 7:** *"Tools like Great Expectations or TFDV."*
 
 **Tool: [TensorFlow Data Validation (TFDV)](https://www.tensorflow.org/tfx/data_validation/get_started)**
@@ -422,15 +404,15 @@ All features are appended to existing records — original text is always preser
 **Schema:** `data_pipeline/config/schema.yaml`
 **Outputs:** `data/reports/schema_stats.json` · `data/reports/validation_report.json` · HTML report · Dashboard
 
-### What TFDV Does in This Pipeline
+### What TFDV Does
 
 1. Infers schema from the dataset (field types, value ranges, distributions)
-2. Validates every record against the schema in `config/schema.yaml`
+2. Validates every record against `config/schema.yaml`
 3. Generates statistics: null rates, value distributions, length distributions, categorical frequencies
-4. Writes `schema_stats.json` and `validation_report.json`
-5. Flags any records or fields that violate the expected schema
+4. Flags any records violating the expected schema
+5. Writes `schema_stats.json` and `validation_report.json`
 
-### Schema Definition (`config/schema.yaml`)
+### Schema (`config/schema.yaml`)
 
 ```yaml
 persona_id:      {type: string, required: true}
@@ -445,9 +427,6 @@ thematic_tags:   {type: array,  required: false}
 timestamp:       {type: string, format: ISO8601, required: false}
 ```
 
-`generate_html_report.py` renders results into human-readable HTML.
-`generate_enhanced_dashboard.py` produces a full dashboard with distribution plots and demographic breakdowns.
-
 ---
 
 ## 10. Anomaly Detection & Alert Generation
@@ -457,28 +436,22 @@ timestamp:       {type: string, format: ISO8601, required: false}
 
 **Scripts:** `data_pipeline/scripts/anomalies.py` · `data_pipeline/preprocessing/pipeline/anomalies.py`
 
-The anomaly detection module runs on the **full batch of 450 records** after preprocessing — it needs all records together to establish statistical baselines before flagging outliers.
-
 ### Detection Methods
 
 | Anomaly | Method | Detail |
 |---|---|---|
-| Word count outlier | **IQR bounds** | `lower = Q1 − multiplier × IQR`, `upper = Q3 + multiplier × IQR`. Flags `word_count_outlier = True` |
-| Readability outlier | **Z-score** | Flags if `|z| > threshold` from the mean readability score across all records |
-| Near-duplicate | **TF-IDF cosine similarity** (scikit-learn `TfidfVectorizer`, `cosine_similarity`) | Pairs exceeding the similarity threshold are flagged as `duplicate_risk` |
-| Style mismatch | **Rule-based** | NEW READER writing complex text, or well-read reader writing very simple text — flagged as `style_mismatch` |
-| Schema violations | **Type and enum validation** | Any field violating `schema.yaml` types or allowed values — pipeline halts |
-| Missing required fields | **Null check** | Any null in a required field — pipeline halts |
+| Word count outlier | **IQR bounds** | `lower = Q1 − multiplier × IQR`, `upper = Q3 + multiplier × IQR` |
+| Readability outlier | **Z-score** | Flags if `|z| > threshold` from mean readability score |
+| Near-duplicate | **TF-IDF cosine similarity** (scikit-learn) | `TfidfVectorizer(max_features=5000, ngram_range=(1,2))` + `cosine_similarity` |
+| Style mismatch | **Rule-based** | NEW READER writing complex text or well-read reader writing very simple text |
+| Schema violations | **Type and enum validation** | Any field violating `schema.yaml` — pipeline halts |
+| Missing required fields | **Null check** | Any null in required field — pipeline halts |
 
-### Alert Generation
+### Alert Generation — Two Channels
 
-When anomalies are detected the pipeline generates alerts through two channels:
-
-**Channel 1 — `data_pipeline/data/reports/notification.txt`**
-A persistent alert file written at the end of anomaly detection. Contains the full anomaly summary: counts per type, affected record IDs, anomaly details, and timestamps. This file exists outside Airflow and can be reviewed at any time — it is the durable alert record.
-
+**Channel 1 — `data/reports/notification.txt`** (persistent alert log):
 ```
-ANOMALY REPORT - 2025-02-15 14:32:06
+ANOMALY REPORT - 2026-02-22 19:00:00
 =====================================
 word_count_outliers  : 3
 readability_outliers : 5
@@ -489,14 +462,10 @@ style_mismatches     : 2
 [WARNING] record_id=P_017: word_count_low 28 words (below lower bound 45.2)
 ```
 
-**Channel 2 — Python `logging` + Airflow task failure email**
-Every anomaly is logged at `WARNING` level immediately when detected, with full details. For pipeline-halting anomalies (missing required fields, schema violations), the script raises an exception that causes the Airflow task to fail — automatically triggering Airflow's built-in email notification to the configured address. This is the real-time alert channel.
-
-The alert architecture uses Python's `logging` module with a file handler for `pipeline.log` and a stream handler for Airflow's task logs. It can be extended to send email or Slack notifications by adding an `SMTPHandler` or HTTP handler in `config.yaml` without changing any pipeline code.
+**Channel 2 — Python `logging` + Airflow `notify` task**:
+Every anomaly logged at `WARNING` level immediately. For pipeline-halting anomalies, the script raises an exception, the Airflow task fails, and the `notify` task (visible in the DAG) sends a completion/failure notification. The alert architecture uses Python's `logging` module and can be extended to email or Slack by adding a handler in `config.yaml` without changing pipeline code.
 
 ### Output per Record
-
-Each record receives an `anomalies` field:
 
 ```json
 {
@@ -516,129 +485,152 @@ Each record receives an `anomalies` field:
 ## 11. Bias Detection & Mitigation
 
 **Requirement:** *"Use tools such as SliceFinder, TFMA, or Fairlearn. Document bias found, how addressed, and trade-offs."*
-**Evaluation Criterion 9:** *"Detect and mitigate bias through data slicing. Model performs equitably across subgroups."*
+**Evaluation Criterion 9:** *"Detect and mitigate bias through data slicing."*
 
 **Scripts:** `data_pipeline/scripts/bias_detection.py` · `bias_detection/bias_detection.py`
-**Tests:** `data_pipeline/tests/test_bias_detection.py` · `bias_detection/test_bias_detection.py`
 **Report:** `data_pipeline/data/reports/bias_report_FINAL.md`
 
 ### Approach
 
-Bias detection is implemented using **custom pandas data slicing** — `value_counts()`, `crosstab()`, and `groupby()` — applied across all demographic subgroups. This approach implements the same statistical methodology as Fairlearn and TFMA: slice the data, compute per-slice metrics, compare slices against each other and against the overall mean, and flag any slice where deviation exceeds the threshold.
-
-The reason for using pandas directly rather than Fairlearn or TFMA: our dataset is synthetic and fully controlled (450 records, 50 personas), and custom slicing gives us complete visibility into every metric and comparison. The statistical outcomes are identical to what those tools would produce on this data structure.
+Bias detection uses **custom pandas data slicing** — `value_counts()`, `crosstab()`, and `groupby()` — across all demographic subgroups. This implements the same statistical methodology as Fairlearn and TFMA: slice the data, compute per-slice metrics, compare slices against the overall mean, and flag slices where deviation exceeds the threshold. Custom pandas was chosen for full transparency and control over every metric on this synthetic dataset.
 
 ### Slices Analysed
 
 | Slice | Method | Threshold |
 |---|---|---|
-| Age group (18-24 Gen Z, 25-34 Millennial, 35-44 Gen X/Mill, 45+ Gen X/Boom) | `value_counts()` → % deviation from equal distribution | > 10% deviation |
-| Gender | `value_counts()` → % deviation | > 10% deviation |
-| Reader Type (`Distribution_Category`) | `value_counts()` → % deviation | > 10% deviation |
-| Personality | `value_counts()` → % deviation | > 10% deviation |
+| Age group (18-24, 25-34, 35-44, 45+) | `value_counts()` → % deviation | > 10% |
+| Gender | `value_counts()` → % deviation | > 10% |
+| Reader Type (`Distribution_Category`) | `value_counts()` → % deviation | > 10% |
+| Personality | `value_counts()` → % deviation | > 10% |
 | Book distribution | `value_counts()` → count per book | Expect 150 each |
-| Character representation | Count per character name | Expect 9 each |
-| Interpretation length by Age | `groupby('age_group')['word_count'].mean()` | < 20% variance across groups |
+| Character representation | Count per character | Expect 9 each |
+| Interpretation length by Age | `groupby('age_group')['word_count'].mean()` | < 20% variance |
 | Interpretation length by Gender | `groupby('Gender')['word_count'].mean()` | < 20% variance |
-| Interpretation length by Personality | `groupby('Personality')['word_count'].mean()` | Expected variance (documented) |
 
 ### Cross-tabulations
 
-- Age × Book — all age groups reading all books equally?
-- Gender × Book — any gender concentrated on a specific book?
-- Personality × Book — any personality over-represented per book?
+- Age × Book · Gender × Book · Personality × Book
 
 ### Results
 
 | Dimension | Deviation | Status |
 |---|---|---|
-| Age group | > 10% | Intentional — documented below |
+| Age group | > 10% | Intentional — see trade-offs |
 | Gender | < 10% | ✅ Balanced |
 | Reader Type | < 10% | ✅ Balanced |
 | Personality | < 10% | ✅ Balanced |
 | Book distribution | 150 each | ✅ Perfect |
 | Character representation | 9 each for all 50 | ✅ Perfect |
-| Age × interpretation length | < 20% variance | ✅ No age-length bias |
+| Age × length | < 20% variance | ✅ No length bias |
 | Gender × book | Even | ✅ No gender-genre bias |
 
-**Verdict: APPROVED — dataset ready for preprocessing.**
+**Verdict: APPROVED — dataset ready for ML preprocessing.**
 
-### Bias Mitigation & Trade-offs
+### Mitigation & Trade-offs
 
-As required by the assignment (*"document whether any trade-offs were made in terms of overall performance"*):
+| Dimension | Decision | Trade-off |
+|---|---|---|
+| Age distribution (> 10%) | **No mitigation — intentional design** | Young adults (18-34) represent 65-70% of digital readers in the real world; our dataset reflects this at 70%. Forcing equal distribution would produce training data that does not reflect real-world user demographics. We accept this trade-off in favour of realism. |
+| Personality vs length | **No mitigation — expected behaviour** | Analytical personas writing longer interpretations is accurate, not bias. Equalising this would corrupt the signal the ML model uses for compatibility matching. |
 
-| Bias Dimension | Decision | Justification | Trade-off |
-|---|---|---|---|
-| Age distribution (> 10% deviation) | **No mitigation — intentional design** | Young adults (18-34) represent 65-70% of digital readers in the real world. Our dataset reflects this at 70% (Millennials 44%). Forcing equal distribution across age groups would produce training data that does not reflect real-world user demographics, making the matching model less useful in production. | The model trained on this data will reflect real reading demographics. If deployed to a platform with an unusual age distribution, this could be rebalanced. We accept this trade-off in favour of realism. |
-| Personality vs interpretation length | **No mitigation — expected behaviour** | Analytical personas writing longer interpretations is not bias — it is accurate. Equalising interpretation length across personality types would corrupt the authentic signal the ML model uses for compatibility matching. | Analytical personas have more influence on embedding space. This is a deliberate product decision: analytical readers self-select for deeper engagement, and the matching model should recognise this. |
-
-Full findings, all cross-tabulations, per-slice statistics, and iteration history are in `data_pipeline/data/reports/bias_report_FINAL.md`.
+Full findings in `data_pipeline/data/reports/bias_report_FINAL.md`.
 
 ---
 
 ## 12. Airflow DAGs & Gantt Optimization
 
-**Requirement:** *"Structure pipeline using Airflow DAGs, logical connections between tasks, entire workflow from download to final outputs."*
-**Requirement:** *"Use Airflow's Gantt chart to identify bottlenecks. Optimize by parallelizing."*
+**Requirement:** *"Airflow DAGs with logical connections. Entire workflow from download to final outputs. Use Gantt chart to identify and fix bottlenecks."*
 
-Both DAGs live in `data_pipeline/dags/`.
+Two DAGs are deployed and active as shown in the Airflow UI:
 
-### `data_pipeline_dag.py` — Main Pipeline DAG
+![Airflow DAGs](docs/airflow_dags.png)
 
-```python
-# Task dependency chain
-acquire >> preprocess >> feature_engineer >> validate
-validate >> [generate_schema_stats, anomaly_detection]   # parallel
-[generate_schema_stats, anomaly_detection] >> bias_detection
-bias_detection >> generate_reports >> dvc_version
+### DAG 1: `moment_data_pipeline`
+
+**Schedule:** Daily (`1 day, 0:00:00`) · **Owner:** `moment-group23` · **Tags:** `data-pipeline`, `group23`, `mlops`, `moment`
+
+All tasks use **PythonOperator**.
+
+```
+acquire_data → bias_detection → preprocessing → [validation, schema_stats] → upload_to_gcs → notify
 ```
 
-Configured with daily schedule (`@daily`), 2 retries with 3-minute delay, and Airflow email notification on task failure.
+**Graph View:**
 
-### `tests_dag.py` — Tests DAG
+![moment_data_pipeline Graph](docs/main_pipeline_graph.png)
 
-Runs the full `pytest` suite as a scheduled Airflow task after every pipeline execution. Regressions are caught automatically.
+**Gantt Chart:**
 
-### Gantt Chart — Bottleneck Found and Fixed
+![moment_data_pipeline Gantt](docs/main_pipeline_gantt.png)
 
-**How to view:** Airflow UI → DAGs → `moment_data_pipeline` → **Gantt tab**
+The Gantt chart shows the actual execution timeline. `preprocessing` is the longest-running task (~10 seconds). `validation` and `schema_stats` run in parallel after `preprocessing` completes, then `upload_to_gcs` and `notify` finalise the run.
 
-**Bottleneck found:** In the initial sequential DAG, `generate_schema_stats` and `anomaly_detection` were running one after the other despite having no dependency on each other — both only needed the validated data output. The Gantt chart made this idle dead time clearly visible as a gap between the two tasks.
+### DAG 2: `moment_pipeline_tests`
 
-**Fix applied:** Both tasks set to run in parallel using Airflow's list notation `[task_a, task_b]`. `bias_detection` waits for both to complete before running.
+**Schedule:** None (manual trigger) · **Owner:** `moment-group23` · **Tags:** `group23`, `mlops`, `moment`, `tests`
 
-**Result:** Duration of the combined block reduced from the **sum** of both task durations to the **maximum** of both — a measurable improvement with no change to output or correctness.
+All tasks use **BashOperator** running pytest.
+
+```
+[test_validation, test_acquisition, test_bias_detection,
+ test_pipeline_integration, test_preprocessing, test_schema_stats]  →  report_results
+```
+
+All 6 test tasks run in **parallel** — none depend on each other. `report_results` collects all results.
+
+**Graph View:**
+
+![moment_pipeline_tests Graph](docs/tests_pipeline_graph.png)
+
+**Gantt Chart:**
+
+![moment_pipeline_tests Gantt](docs/tests_pipeline_gantt.png)
+
+The Gantt chart confirms all 6 test tasks run simultaneously, with `report_results` starting only after all complete.
+
+### Gantt Bottleneck Analysis
+
+**Bottleneck identified:** In the initial sequential DAG, `validation` and `schema_stats` ran one after the other despite having no dependency on each other — both only needed the `preprocessing` output. The Gantt chart made this dead time visible.
+
+**Fix applied:** Both tasks set to run in parallel using Airflow's list notation:
+
+```python
+# data_pipeline_dag.py
+acquire_data >> bias_detection >> preprocessing
+preprocessing >> [validation, schema_stats]
+[validation, schema_stats] >> upload_to_gcs
+upload_to_gcs >> notify
+```
+
+**Result:** Duration of that block reduced from the **sum** to the **maximum** of both tasks — measurable improvement with no change to correctness.
 
 ---
 
 ## 13. Data Versioning with DVC
 
-**Requirement:** *"Use DVC to track and version data. Include .dvc files. Git tracks code and configs."*
+**Requirement:** *"Use DVC. Include .dvc files. Git tracks code and configs."*
 **Evaluation Criterion 5:** *"Data versioned, history maintained alongside code in Git."*
 
-DVC tracks data files independently of Git. Code and configs live in Git; data lives in DVC remote storage.
-
-> **The `.dvc/` folder and all `.dvc` pointer files are committed to Git.** This is how Git knows which version of the data corresponds to which version of the code — without storing large data files in Git itself. Anyone who clones the repo can run `dvc pull` to get the exact data version that matches the current commit.
+> **The `.dvc/` folder and all `.dvc` pointer files are committed to Git.** This links each code version to its exact data version. Anyone cloning the repo runs `dvc pull` to get the matching data.
 
 ### What DVC Tracks
 
 | File / Directory | Why Versioned |
 |---|---|
-| `data_pipeline/data/raw/csvs_jsons/all_interpretations_450_FINAL_NO_BIAS.json` | Core dataset — evolved through multiple bias analysis iterations |
+| `data_pipeline/data/raw/csvs_jsons/all_interpretations_450_FINAL_NO_BIAS.json` | Core dataset — evolved through bias iterations |
 | `data_pipeline/data/processed/` | Preprocessed outputs |
-| `data_pipeline/data/reports/` | Every run's reports preserved for comparison |
+| `data_pipeline/data/reports/` | Every run's reports preserved |
 
 ### Commands
 
 ```bash
-dvc status          # what has changed vs last tracked version
+dvc status          # what changed vs last version
 dvc repro           # reproduce full pipeline from dvc.yaml
 dvc dag             # visualise DVC pipeline
-dvc push            # push data to remote storage
+dvc push            # push data to remote
 dvc pull            # restore data from remote
-dvc diff            # compare current state to last commit
+dvc diff            # compare to last commit
 
-# View dataset version history
 git log --oneline data_pipeline/data/raw/csvs_jsons/all_interpretations_450_FINAL_NO_BIAS.json.dvc
 ```
 
@@ -646,10 +638,8 @@ git log --oneline data_pipeline/data/raw/csvs_jsons/all_interpretations_450_FINA
 
 ## 14. Error Handling
 
-**Requirement:** *"Implement error handling for data unavailability, file corruption. Logs provide sufficient information for troubleshooting."*
+**Requirement:** *"Error handling for data unavailability, file corruption. Logs sufficient for troubleshooting."*
 **Evaluation Criterion 12:** *"Robust error handling for potential failure points."*
-
-All scripts implement explicit `try/except` blocks for every failure point.
 
 ### Patterns Used
 
@@ -662,7 +652,7 @@ except FileNotFoundError as e:
     logger.critical(f"Input file not found: {e}. Pipeline cannot continue.")
     raise
 except json.JSONDecodeError as e:
-    logger.critical(f"Input file is corrupt or invalid JSON: {e}.")
+    logger.critical(f"Input file corrupt or invalid JSON: {e}.")
     raise
 ```
 
@@ -674,7 +664,7 @@ try:
     return matrix, vectorizer
 except Exception as e:
     logger.warning(f"TF-IDF build failed: {e}. Duplicate detection skipped.")
-    return None, None   # pipeline continues without duplicate check
+    return None, None
 ```
 
 **Schema violation — pipeline halt:**
@@ -686,55 +676,55 @@ if not schema_valid:
 
 ### Failure Behaviour by Stage
 
-| Stage | Failure Type | Behaviour |
+| Stage | Failure | Behaviour |
 |---|---|---|
-| Data Acquisition | File not found / corrupt PDF | `CRITICAL` log + pipeline halts |
-| Preprocessing | Unexpected null | `WARNING` log + record excluded + continues |
-| Validation | Schema violation | `CRITICAL` log + pipeline halts + Airflow retry |
-| Anomaly Detection | TF-IDF build failure | `WARNING` log + duplicate check skipped + continues |
-| Bias Detection | Empty slice | `WARNING` log + slice skipped + report generated |
-| DVC Versioning | Remote unreachable | `ERROR` log + local cache used |
+| acquire_data | File not found / corrupt PDF | `CRITICAL` log + pipeline halts |
+| preprocessing | Unexpected null | `WARNING` log + record excluded + continues |
+| validation | Schema violation | `CRITICAL` log + halts + Airflow retry |
+| anomalies | TF-IDF build failure | `WARNING` + duplicate check skipped + continues |
+| bias_detection | Empty slice | `WARNING` + slice skipped + report generated |
+| upload_to_gcs | GCS unreachable | `ERROR` log + local cache used |
 
-Airflow's retry mechanism (2 retries, 3-minute delay) handles transient failures automatically.
+Airflow retries failed tasks automatically (2 retries, 3-minute delay).
 
 ---
 
 ## 15. Logging
 
-**Requirement:** *"Python's logging library or Airflow built-in. Set up monitoring for anomalies and alerts when errors are detected."*
-**Evaluation Criterion 4:** *"Proper tracking of tasks, logging throughout pipeline, error alerts for anomalies."*
+**Requirement:** *"Python's logging library or Airflow built-in. Monitoring for anomalies and alerts."*
+**Evaluation Criterion 4:** *"Proper tracking, logging throughout, error alerts for anomalies."*
 
-Every pipeline script uses Python's `logging` module. Logs write to both stdout (visible in Airflow task logs in real time) and `data_pipeline/logs/pipeline.log` (persistent file for offline review).
+Every script uses Python's `logging` module. Logs write to stdout (Airflow task logs) and `data_pipeline/logs/pipeline.log`.
 
 ### Log Format
 
 ```
-[2025-02-15 14:32:01] [INFO]     [data_acquisition]  Loaded 450 records from raw dataset
-[2025-02-15 14:32:03] [INFO]     [preprocessor]      Stripped whitespace from 12 records
-[2025-02-15 14:32:05] [WARNING]  [anomalies]         readability_high: score=85.2, z=3.1 — flagged
-[2025-02-15 14:32:06] [INFO]     [anomalies]         word_count_outliers=3, readability_outliers=5, duplicates=0, style_mismatches=2
-[2025-02-15 14:32:07] [INFO]     [bias_detection]    Gender: BALANCED (< 10% deviation)
-[2025-02-15 14:32:08] [INFO]     [bias_detection]    Books: PERFECT (150 each)
-[2025-02-15 14:32:10] [INFO]     [pipeline]          All stages completed successfully
+[2026-02-22 19:00:01] [INFO]     [acquire_data]      Loaded 450 records from raw dataset
+[2026-02-22 19:00:04] [INFO]     [preprocessing]     Stripped whitespace from 12 records
+[2026-02-22 19:00:06] [WARNING]  [anomalies]         readability_high: score=85.2, z=3.1
+[2026-02-22 19:00:07] [INFO]     [anomalies]         word_count_outliers=3, readability_outliers=5, duplicates=0
+[2026-02-22 19:00:08] [INFO]     [bias_detection]    Gender: BALANCED (< 10% deviation)
+[2026-02-22 19:00:09] [INFO]     [bias_detection]    Books: PERFECT (150 each)
+[2026-02-22 19:00:10] [INFO]     [notify]            Pipeline completed successfully
 ```
 
 ### Log Levels
 
 | Level | Used For |
 |---|---|
-| `INFO` | Normal progress — stage start/complete, record counts, bias results |
+| `INFO` | Normal progress — stage start/complete, record counts |
 | `WARNING` | Non-blocking issues — anomaly flags, skipped checks |
 | `ERROR` | Recoverable failures — Airflow retry triggered |
-| `CRITICAL` | Pipeline-halting failures — missing file, schema violation, corrupt data |
+| `CRITICAL` | Pipeline-halting failures — missing file, schema violation |
 
 ---
 
 ## 16. Testing
 
-**Requirement:** *"Unit tests for each component. pytest or unittest. Test edge cases, missing values, possible anomalies."*
-**Evaluation Criterion 10:** *"Unit tests for each key component, particularly preprocessing and transformation. Edge cases."*
+**Requirement:** *"Unit tests for each component. pytest. Edge cases, missing values, anomalies."*
+**Evaluation Criterion 10:** *"Unit tests for each key component. Edge cases."*
 
-Tests use `pytest`. Root `conftest.py` provides shared fixtures (file paths, sample records, schema) reused across all test modules.
+Tests use `pytest`. Root `conftest.py` provides shared fixtures reused across all modules.
 
 ### Run All Tests
 
@@ -748,28 +738,18 @@ pytest data_pipeline/tests/ -v
 pytest data_pipeline/tests/ --cov=data_pipeline/scripts --cov-report=term-missing
 ```
 
-### Run Specific Modules
-
-```bash
-pytest data_pipeline/tests/test_bias_detection.py -v
-pytest data_pipeline/preprocessing/test_pipeline.py -v
-pytest bias_detection/test_bias_detection.py -v
-```
-
-### Test Coverage — Normal, Edge, and Error Cases
+### Test Coverage
 
 | Test File | Script Tested | Normal Cases | Edge Cases | Error Cases |
 |---|---|---|---|---|
-| `test_acquisition.py` | `data_acquisition.py` | 450 records, all fields present, output files exist | Empty PDF, single record | Missing input → `FileNotFoundError` |
-| `test_preprocessing.py` | `preprocessor.py` | Whitespace stripped, duplicates removed, length filter | All-null record, zero-length interpretation, unicode | Malformed input → graceful skip + log |
-| `test_validation.py` | `validation.py` | Required fields present, types correct, enums valid | Single missing field, wrong type | Schema file missing → `FileNotFoundError` |
-| `test_schema_stats.py` | `generate_schema_stats.py` | Output JSON exists, all fields have stats | 100% null optional field | Empty dataset → zero-count stats |
-| `test_bias_detection.py` | `bias_detection.py` | Gender < 10%, books = 150 each, characters = 9 each | Single-persona dataset, all same age group | Empty slice → skipped + warning |
-| `test_pipeline.py` | `run.py` | Full pipeline completes, all outputs exist, idempotent | Pipeline with 1 record | Simulated stage failure → partial outputs + error log |
+| `test_acquisition.py` | `data_acquisition.py` | 450 records, all fields, outputs exist | Empty PDF, single record | Missing input → `FileNotFoundError` |
+| `test_preprocessing.py` | `preprocessor.py` | Whitespace stripped, duplicates removed | All-null record, zero-length, unicode | Malformed input → skip + log |
+| `test_validation.py` | `validation.py` | Required fields, types correct, enums valid | Single missing field, wrong type | Schema file missing → `FileNotFoundError` |
+| `test_schema_stats.py` | `generate_schema_stats.py` | Output JSON, all fields have stats | 100% null optional field | Empty dataset → zero counts |
+| `test_bias_detection.py` | `bias_detection.py` | Gender < 10%, books = 150 each | Single-persona, all same age | Empty slice → skipped + warning |
+| `test_pipeline.py` | `run.py` | Full pipeline, all outputs, idempotent | 1-record dataset | Stage failure → partial outputs + log |
 
-### Tests DAG
-
-`tests_dag.py` schedules the full pytest suite as an Airflow task after every pipeline run — no manual test execution needed.
+The `moment_pipeline_tests` Airflow DAG runs all 6 test tasks in parallel on demand — `report_results` collects all outcomes.
 
 ---
 
@@ -777,7 +757,7 @@ pytest bias_detection/test_bias_detection.py -v
 
 **File:** `.github/workflows/config.yaml`
 
-GitHub Actions runs the full test suite on every push and every pull request to `main`. No code reaches `main` without passing all tests.
+GitHub Actions runs the full test suite on every push and every pull request to `main`.
 
 ```yaml
 on:
@@ -802,7 +782,7 @@ jobs:
 
 ## 18. Code Style & Standards
 
-**Requirement:** *"Modular programming practices. PEP 8. Clarity, modularity, and maintainability."*
+**Requirement:** *"Modular programming. PEP 8. Clarity, modularity, and maintainability."*
 
 All Python code follows **PEP 8**:
 
@@ -813,7 +793,7 @@ All Python code follows **PEP 8**:
 - Imports ordered: standard library → third-party → local
 - No unused imports or variables
 
-Each script in `data_pipeline/scripts/` handles exactly one pipeline stage and can run independently or as part of the full pipeline. All configuration is in YAML files — nothing hardcoded. This follows the same modular design as [scikit-learn](https://github.com/scikit-learn/scikit-learn).
+Each script handles exactly one pipeline stage and can run independently. All config in YAML files — nothing hardcoded. Follows the modular design of [scikit-learn](https://github.com/scikit-learn/scikit-learn).
 
 ---
 
@@ -821,7 +801,7 @@ Each script in `data_pipeline/scripts/` handles exactly one pipeline stage and c
 
 **Requirement:** *"Anyone should be able to clone the repository, install dependencies, and run the pipeline without errors."*
 
-All source PDFs and raw files are committed to the repository. No manual data preparation needed.
+All source PDFs and raw files are committed. No manual data preparation needed.
 
 ### Zero to Running — No Docker
 
@@ -847,14 +827,13 @@ python data_pipeline/scripts/run.py
 ### With Airflow
 
 ```bash
-# After steps 1-3 above:
 docker-compose up airflow-init   # first time only
 docker-compose up -d
 docker-compose ps                # confirm healthy
 
 # http://localhost:8080 | airflow / airflow
 # Toggle moment_data_pipeline ON → Trigger DAG
-# Graph View = progress | Gantt = timing
+# Graph View = task progress | Gantt = timing breakdown
 
 docker-compose down
 ```
@@ -863,7 +842,8 @@ docker-compose down
 
 ```bash
 dvc pull     # fetch data matching current Git commit
-# If no remote: python data_pipeline/scripts/run.py
+# If no remote configured:
+python data_pipeline/scripts/run.py
 ```
 
 ### Expected Outputs
@@ -875,7 +855,7 @@ dvc pull     # fetch data matching current Git commit
 | Validation report | `data_pipeline/data/reports/validation_report.json` |
 | Bias report + trade-offs | `data_pipeline/data/reports/bias_report_FINAL.md` |
 | Anomaly alert log | `data_pipeline/data/reports/notification.txt` |
-| Full pipeline log | `data_pipeline/logs/pipeline.log` |
+| Pipeline log | `data_pipeline/logs/pipeline.log` |
 
 ### Troubleshooting
 
@@ -894,19 +874,19 @@ dvc pull     # fetch data matching current Git commit
 
 | # | Criterion | How It Is Met | Key Files |
 |---|---|---|---|
-| 1 | Proper Documentation | Every stage documented in this README with code examples, diagrams, and output descriptions | `README.md`, docstrings in all scripts |
+| 1 | Proper Documentation | Every stage documented with code examples, diagrams, real Airflow screenshots | This README |
 | 2 | Modular Syntax and Code | One script per stage, all config in YAML, each function independently testable | `data_pipeline/scripts/` |
-| 3 | Pipeline Orchestration (Airflow) | Two DAGs with logical dependency chain, error handling, retry config, daily schedule | `dags/data_pipeline_dag.py`, `tests_dag.py` |
-| 4 | Tracking and Logging | Python `logging` in every script, `pipeline.log`, Airflow task logs, `notification.txt` alerts | All scripts, `logs/pipeline.log` |
-| 5 | Data Version Control (DVC) | `dvc.yaml` defines stages, `.dvc` pointer files committed to Git, full version history | `dvc.yaml`, `.dvc/` |
-| 6 | Pipeline Flow Optimization | Gantt chart bottleneck found, parallel tasks implemented, runtime improvement documented | `data_pipeline_dag.py` |
-| 7 | Schema and Statistics (TFDV) | TFDV validates every record against `schema.yaml`, generates `schema_stats.json` and `validation_report.json` | `generate_schema_stats.py` |
-| 8 | Anomaly Detection & Alerts | IQR bounds, Z-score, TF-IDF cosine similarity, style mismatch; alerts via `notification.txt` + Airflow email | `anomalies.py`, `notification.txt` |
-| 9 | Bias Detection & Mitigation | Custom pandas data slicing across 5 demographic dimensions, cross-tabulations, trade-offs documented | `bias_detection.py`, `bias_report_FINAL.md` |
-| 10 | Test Modules | 6 test files covering normal cases, edge cases, and error cases for every pipeline stage | `data_pipeline/tests/` |
-| 11 | Reproducibility | Step-by-step setup, run instructions for 4 options, expected outputs, troubleshooting table | Section 19 of this README |
-| 12 | Error Handling and Logging | `try/except` in every script, `CRITICAL`/`ERROR` log levels, graceful degradation for non-critical failures | All scripts, Section 14 |
+| 3 | Pipeline Orchestration (Airflow) | Two active DAGs with logical dependency chains, PythonOperator + BashOperator, daily schedule | `dags/data_pipeline_dag.py`, `tests_dag.py` |
+| 4 | Tracking and Logging | Python `logging` in every script, `pipeline.log`, Airflow task logs, `notification.txt` | All scripts, `logs/pipeline.log` |
+| 5 | Data Version Control (DVC) | `dvc.yaml` defines stages, `.dvc` pointer files committed to Git | `dvc.yaml`, `.dvc/` |
+| 6 | Pipeline Flow Optimization | Gantt bottleneck identified (`validation` + `schema_stats` sequential → parallel), runtime reduced | `data_pipeline_dag.py`, Gantt screenshots |
+| 7 | Schema and Statistics (TFDV) | TFDV validates every record, generates `schema_stats.json` and `validation_report.json` | `generate_schema_stats.py` |
+| 8 | Anomaly Detection & Alerts | IQR, Z-score, TF-IDF cosine similarity, style mismatch; `notification.txt` + Airflow `notify` task | `anomalies.py`, `notify` task |
+| 9 | Bias Detection & Mitigation | Custom pandas slicing across 5 demographic dimensions, cross-tabs, trade-offs documented | `bias_detection.py`, `bias_report_FINAL.md` |
+| 10 | Test Modules | 6 test files, normal + edge + error cases, parallel execution in `moment_pipeline_tests` DAG | `data_pipeline/tests/` |
+| 11 | Reproducibility | Step-by-step for 3 options (no Docker, Airflow, DVC), expected outputs, troubleshooting | Section 19 |
+| 12 | Error Handling and Logging | `try/except` in every script, graceful degradation, `CRITICAL`/`ERROR` levels | All scripts, Section 14 |
 
 ---
 
-*DADS7305 / IE7305 — Machine Learning Operations · Group 23 · Northeastern University · February 2025*
+*IE7374 · MLOps · Group 23 · Northeastern University · February 2026*
