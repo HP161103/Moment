@@ -3,6 +3,7 @@ Data Validation Module
 Validates data quality, schema, and detects anomalies
 """
 
+import os
 import logging
 import pandas as pd
 import numpy as np
@@ -22,8 +23,12 @@ logger = logging.getLogger(__name__)
 class DataValidator:
     """Handle data validation and quality checks"""
     
-    def __init__(self, config_path="Data-Pipeline/config/config.yaml"):
+    def __init__(self, config_path=None):
         """Initialize with configuration"""
+        if config_path is None:
+            config_path = os.path.join(
+                os.path.dirname(__file__), '..', 'config', 'config.yaml'
+            )
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
         
