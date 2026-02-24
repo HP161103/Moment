@@ -1,106 +1,142 @@
 """
-Unit tests for preprocessing module
+Unit tests for preprocessor module
 """
 
 import pytest
-import pandas as pd
-import numpy as np
-from pathlib import Path
 import sys
+from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent / 'scripts'))
 
-from preprocessor import DataPreprocessor
+from preprocessor import clean_text, validate_text, detect_issues, calculate_metrics
 
 
-class TestDataPreprocessor:
-    """Test suite for DataPreprocessor class"""
-    
+class TestCleanText:
+    """Tests for clean_text function"""
+
+    def test_returns_string(self):
+        assert isinstance(clean_text("hello"), str)
+
+    def test_none_returns_empty(self):
+        assert clean_text(None) == ""
+
+    def test_empty_returns_empty(self):
+        assert clean_text("") == ""
+
+    def test_strips_whitespace(self):
+        result = clean_text("  hello world  ")
+        assert not result.startswith(" ")
+        assert not result.endswith(" ")
+
+    def test_collapses_extra_spaces(self):
+        result = clean_text("too   many    spaces")
+        assert "  " not in result
+
+    def test_content_preserved(self):
+        text = "Victor ran away from the creature."
+        result = clean_text(text)
+        assert "Victor" in result
+        assert "creature" in result
+
+
+class TestValidateText:
+    """Tests for validate_text function"""
+
     @pytest.fixture
-    def preprocessor(self):
-        """Create DataPreprocessor instance"""
-        return DataPreprocessor()
-    
+    def cfg(self):
+        return {
+            "validation": {
+                "min_words": 10,
+                "max_words": 600,
+                "min_chars": 50,
+                "quality_threshold": 0.5
+            },
+            "issues": {
+                "profanity_ratio_threshold": 0.30,
+                "caps_threshold": 0.50,
+                "punct_threshold": 0.10,
+                "repetitive_chars": 4,
+                "repetitive_words_threshold": 0.30
+            }
+        }
+
     @pytest.fixture
-    def sample_data(self):
-        """Create sample data for testing"""
-        return pd.DataFrame({
-            'num1': [1, 2, np.nan, 4, 5],
-            'num2': [10, 20, 30, 40, 50],
-            'cat1': ['A', 'B', 'A', np.nan, 'C'],
-            'target': [0, 1, 0, 1, 1]
-        })
-    
-    def test_initialization(self, preprocessor):
-        """Test that DataPreprocessor initializes correctly"""
-        assert preprocessor is not None
-        assert preprocessor.config is not None
-    
-    def test_handle_missing_values_drop(self, preprocessor, sample_data):
-        """Test missing value handling with drop method"""
-        result = preprocessor.handle_missing_values(sample_data)
-        assert result.isnull().sum().sum() == 0
-    
-    def test_remove_duplicates(self, preprocessor):
-        """Test duplicate removal"""
-        data_with_dupes = pd.DataFrame({
-            'col1': [1, 2, 2, 3],
-            'col2': ['a', 'b', 'b', 'c']
-        })
-        
-        result = preprocessor.remove_duplicates(data_with_dupes)
-        assert len(result) == 3  # One duplicate removed
-    
-    def test_handle_outliers(self, preprocessor):
-        """Test outlier handling"""
-        data = pd.DataFrame({
-            'value': [1, 2, 3, 4, 5, 100],  # 100 is an outlier
-            'target': [0, 0, 0, 1, 1, 1]
-        })
-        
-        result = preprocessor.handle_outliers(data, columns=['value'])
-        assert len(result) < len(data)  # Outlier removed
-    
-    def test_encode_categorical(self, preprocessor, sample_data):
-        """Test categorical encoding"""
-        result = preprocessor.encode_categorical(sample_data.dropna(), columns=['cat1'])
-        assert result['cat1'].dtype in [np.int64, np.int32, np.float64]
-    
-    def test_preprocess_pipeline(self, preprocessor, sample_data):
-        """Test full preprocessing pipeline"""
-        result = preprocessor.preprocess(sample_data)
-        
-        # Should have no missing values
-        assert result.isnull().sum().sum() == 0
-        
-        # Should have same or fewer rows (due to cleaning)
-        assert len(result) <= len(sample_data)
+    def valid_text(self):
+        return (
+            "The creature opened its eyes and Victor ran away immediately. "
+            "He could not handle what he had created with his own hands. "
+            "The yellow eye fixated on him with great intensity and purpose."
+        )
+
+    def test_returns_dict(self, valid_text, cfg):
+        result = validate_text(valid_text, cfg)
+        assert isinstance(result, dict)
+
+    def test_valid_text_passes(self, valid_text, cfg):
+        result = validate_text(valid_text, cfg)
+        assert result["is_valid"] is True
+
+    def test_required_keys(self, valid_text, cfg):
+        result = validate_text(valid_text, cfg)
+        for key in ["is_valid", "quality_score", "word_count"]:
+            assert key in result
+
+    def test_empty_text_fails(self, cfg):
+        result = validate_text("", cfg)
+        assert result["is_valid"] is False
+
+
+class TestCalculateMetrics:
+    """Tests for calculate_metrics function"""
+
+    def test_returns_dict(self):
+        result = calculate_metrics("hello world test text here")
+        assert isinstance(result, dict)
+
+    def test_word_count_correct(self):
+        result = calculate_metrics("one two three four five")
+        assert result["word_count"] == 5
+
+    def test_empty_text_zeros(self):
+        result = calculate_metrics("")
+        assert result["word_count"] == 0
+
+    def test_none_returns_zeros(self):
+        result = calculate_metrics(None)
+        assert result["word_count"] == 0
+
+    def test_required_keys(self):
+        result = calculate_metrics("some sample text here today")
+        for key in ["word_count", "char_count", "readability_score"]:
+            assert key in result
 
 
 class TestEdgeCases:
-    """Test edge cases and error handling"""
-    
+    """Edge case tests"""
+
     @pytest.fixture
-    def preprocessor(self):
-        return DataPreprocessor()
-    
-    def test_empty_dataframe(self, preprocessor):
-        """Test handling of empty dataframe"""
-        empty_df = pd.DataFrame()
-        # Should not raise an error
-        try:
-            result = preprocessor.handle_missing_values(empty_df)
-            assert len(result) == 0
-        except Exception as e:
-            pytest.fail(f"Should handle empty dataframe: {e}")
-    
-    def test_all_missing_values(self, preprocessor):
-        """Test handling of column with all missing values"""
-        data = pd.DataFrame({
-            'col1': [np.nan, np.nan, np.nan],
-            'col2': [1, 2, 3]
-        })
-        
-        result = preprocessor.handle_missing_values(data)
-        # Should handle gracefully
-        assert result is not None
+    def cfg(self):
+        return {
+            "validation": {
+                "min_words": 10,
+                "max_words": 600,
+                "min_chars": 50,
+                "quality_threshold": 0.5
+            },
+            "issues": {
+                "profanity_ratio_threshold": 0.30,
+                "caps_threshold": 0.50,
+                "punct_threshold": 0.10,
+                "repetitive_chars": 4,
+                "repetitive_words_threshold": 0.30
+            }
+        }
+
+    def test_very_short_text(self, cfg):
+        result = validate_text("Too short.", cfg)
+        assert result["is_valid"] is False
+
+    def test_unicode_characters(self):
+        result = clean_text("Victor\u2019s creation was \u201camazing\u201d")
+        assert "\u2019" not in result
+        assert "\u201c" not in result
