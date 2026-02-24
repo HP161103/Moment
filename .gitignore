@@ -147,3 +147,7 @@ MANIFEST
 .dmypy.json
 dmypy.json
 gcs-service-account.json
+data/raw/
+data/processed/
+data/reports/
+data/schemas/
