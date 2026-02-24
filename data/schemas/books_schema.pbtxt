@@ -1,0 +1,289 @@
+feature {
+  name: "book_id"
+  type: BYTES
+  domain: "book_id"
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "passage_id"
+  type: BYTES
+  domain: "passage_id"
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "book_title"
+  type: BYTES
+  domain: "book_title"
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "book_author"
+  type: BYTES
+  domain: "book_author"
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "chapter_number"
+  type: BYTES
+  domain: "chapter_number"
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "passage_title"
+  type: BYTES
+  domain: "passage_title"
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "passage_number"
+  type: INT
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "cleaned_passage_text"
+  type: BYTES
+  domain: "cleaned_passage_text"
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "is_valid"
+  type: INT
+  bool_domain {
+  }
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "quality_score"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "quality_issues"
+  type: BYTES
+  domain: "quality_issues"
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "timestamp"
+  type: BYTES
+  domain: "timestamp"
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "metrics_word_count"
+  type: INT
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "metrics_char_count"
+  type: INT
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "metrics_sentence_count"
+  type: INT
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "metrics_avg_word_length"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "metrics_avg_sentence_length"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+feature {
+  name: "metrics_readability_score"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+    min_count: 1
+  }
+  shape {
+    dim {
+      size: 1
+    }
+  }
+}
+string_domain {
+  name: "book_id"
+  value: "gutenberg_64317"
+}
+string_domain {
+  name: "passage_id"
+  value: "gutenberg_64317_passage_1"
+  value: "gutenberg_64317_passage_2"
+  value: "gutenberg_64317_passage_3"
+}
+string_domain {
+  name: "book_title"
+  value: "The Great Gatsby"
+}
+string_domain {
+  name: "book_author"
+  value: "F. Scott Fitzgerald"
+}
+string_domain {
+  name: "chapter_number"
+  value: "Chapter 1 (End)"
+  value: "Chapter 7"
+  value: "Chapter 9 (Final Lines)"
+}
+string_domain {
+  name: "passage_title"
+  value: "\""
+  value: "T"
+}
+string_domain {
+  name: "cleaned_passage_text"
+  value: "And as I sat there brooding on the old, unknown world, I thought of Gatsby\'s wonder when he\nfirst picked out the green light at the end of Daisy\'s dock. He had come a long way to this blue\nlawn, and his dream must have seemed so close that he could hardly fail to grasp it. He did\nnot know that it was already behind him, somewhere back in that vast obscurity beyond the\ncity, where the dark fields of the republic rolled on under the night.\nGatsby believed in the green light, the orgastic future that year by year recedes before us. It eluded us\nthen, but that\'s no matter--tomorrow we will run faster, stretch out our arms farther... And one fine\nmorning----\nSo we beat on, boats against the current, borne back ceaselessly into the past."
+  value: "But I didn\'t call to him, for he gave a sudden intimation that he was content to be alone--he\nstretched out his arms toward the dark water in a curious way, and, far as I was from him, I\ncould have sworn he was trembling. Involuntarily I glanced seaward--and distinguished\nnothing except a single green light, minute and far away, that might have been the end of a\ndock. When I looked once more for Gatsby he had vanished, and I was alone again in the\nunquiet darkness."
+  value: "She\'s got an indiscreet voice,"
+}
+string_domain {
+  name: "quality_issues"
+  value: ""
+  value: "too_short: 5 words (min 10), too_few_chars: 26, wrong_language: nl"
+}
+string_domain {
+  name: "timestamp"
+  value: "2026-02-21T04:44:22"
+}

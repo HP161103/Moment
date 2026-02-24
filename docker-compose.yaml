@@ -3,7 +3,8 @@
 # Access: http://localhost:8080 (admin/admin)
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.10.4-python3.11
+  build: .
+  image: moment-airflow:latest
   environment: &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__FERNET_KEY: ''

@@ -12,7 +12,8 @@ import os
 import tempfile
 import shutil
 from unittest.mock import patch, MagicMock
-from data_pipeline.scripts.bias_detection import load_data, run_analysis
+import sys; sys.path.insert(0, '/opt/airflow/scripts')
+from bias_detection import load_data, run_analysis
 
 # ============================================================
 # FIXTURES - Sample Data for Testing
@@ -218,8 +219,8 @@ class TestDataLoading:
     
     def test_load_data_with_mock_files(self, temp_json_file, temp_csv_file):
         """Test load_data function with mock files"""
-        with patch('data_pipeline.scripts.bias_detection.INTERPRETATIONS_FILE', temp_json_file), \
-             patch('data_pipeline.scripts.bias_detection.CHARACTERS_FILE', temp_csv_file):
+        with patch('bias_detection.INTERPRETATIONS_FILE', temp_json_file), \
+             patch('bias_detection.CHARACTERS_FILE', temp_csv_file):
             
             df = load_data()
             
@@ -230,8 +231,8 @@ class TestDataLoading:
     
     def test_load_data_creates_age_groups(self, temp_json_file, temp_csv_file):
         """Test that age groups are created correctly"""
-        with patch('data_pipeline.scripts.bias_detection.INTERPRETATIONS_FILE', temp_json_file), \
-             patch('data_pipeline.scripts.bias_detection.CHARACTERS_FILE', temp_csv_file):
+        with patch('bias_detection.INTERPRETATIONS_FILE', temp_json_file), \
+             patch('bias_detection.CHARACTERS_FILE', temp_csv_file):
             
             df = load_data()
             
@@ -250,14 +251,14 @@ class TestDataLoading:
     
     def test_load_data_handles_missing_json_file(self):
         """Test error handling when JSON file is missing"""
-        with patch('data_pipeline.scripts.bias_detection.INTERPRETATIONS_FILE', 'nonexistent_file.json'):
+        with patch('bias_detection.INTERPRETATIONS_FILE', 'nonexistent_file.json'):
             df = load_data()
             assert df is None, "Should return None when file is missing"
     
     def test_load_data_handles_missing_csv_file(self, temp_json_file):
         """Test error handling when CSV file is missing"""
-        with patch('data_pipeline.scripts.bias_detection.INTERPRETATIONS_FILE', temp_json_file), \
-             patch('data_pipeline.scripts.bias_detection.CHARACTERS_FILE', 'nonexistent_file.csv'):
+        with patch('bias_detection.INTERPRETATIONS_FILE', temp_json_file), \
+             patch('bias_detection.CHARACTERS_FILE', 'nonexistent_file.csv'):
             df = load_data()
             assert df is None, "Should return None when CSV is missing"
     
@@ -282,8 +283,8 @@ class TestDataLoading:
         with open(json_file, 'w') as f:
             json.dump(interp_data, f)
         char_data.to_csv(csv_file, index=False)
-        with patch('data_pipeline.scripts.bias_detection.INTERPRETATIONS_FILE', str(json_file)), \
-             patch('data_pipeline.scripts.bias_detection.CHARACTERS_FILE', str(csv_file)):
+        with patch('bias_detection.INTERPRETATIONS_FILE', str(json_file)), \
+             patch('bias_detection.CHARACTERS_FILE', str(csv_file)):
             df = load_data()
             
             assert df is not None
@@ -462,8 +463,8 @@ class TestIntegrationWithFixtureData:
 
     def test_full_pipeline_with_fixture_data(self, full_scale_json_file, full_scale_csv_file):
         """Test complete pipeline using fixture-generated full-scale data"""
-        with patch('data_pipeline.scripts.bias_detection.INTERPRETATIONS_FILE', full_scale_json_file), \
-             patch('data_pipeline.scripts.bias_detection.CHARACTERS_FILE', full_scale_csv_file):
+        with patch('bias_detection.INTERPRETATIONS_FILE', full_scale_json_file), \
+             patch('bias_detection.CHARACTERS_FILE', full_scale_csv_file):
 
             df = load_data()
 
@@ -524,8 +525,8 @@ class TestEdgeCases:
         with open(json_file, 'w') as f:
             json.dump(interp_data, f)
         char_data.to_csv(csv_file, index=False)
-        with patch('data_pipeline.scripts.bias_detection.INTERPRETATIONS_FILE', str(json_file)), \
-             patch('data_pipeline.scripts.bias_detection.CHARACTERS_FILE', str(csv_file)):
+        with patch('bias_detection.INTERPRETATIONS_FILE', str(json_file)), \
+             patch('bias_detection.CHARACTERS_FILE', str(csv_file)):
             df = load_data()
             
             assert len(df) == 1, "Should handle single record"
@@ -555,8 +556,8 @@ class TestEdgeCases:
         with open(json_file, 'w') as f:
             json.dump(interp_data, f)
         char_data.to_csv(csv_file, index=False)
-        with patch('data_pipeline.scripts.bias_detection.INTERPRETATIONS_FILE', str(json_file)), \
-             patch('data_pipeline.scripts.bias_detection.CHARACTERS_FILE', str(csv_file)):
+        with patch('bias_detection.INTERPRETATIONS_FILE', str(json_file)), \
+             patch('bias_detection.CHARACTERS_FILE', str(csv_file)):
             
             # Should either return None or handle gracefully
             try:
@@ -591,8 +592,8 @@ class TestEdgeCases:
         with open(json_file, 'w') as f:
             json.dump(interp_data, f)
         char_data.to_csv(csv_file, index=False)
-        with patch('data_pipeline.scripts.bias_detection.INTERPRETATIONS_FILE', str(json_file)), \
-             patch('data_pipeline.scripts.bias_detection.CHARACTERS_FILE', str(csv_file)):
+        with patch('bias_detection.INTERPRETATIONS_FILE', str(json_file)), \
+             patch('bias_detection.CHARACTERS_FILE', str(csv_file)):
             df = load_data()
             
             # Both interpretations should get the same character data

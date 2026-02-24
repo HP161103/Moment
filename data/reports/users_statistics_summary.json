@@ -1,0 +1,111 @@
+{
+  "timestamp": "2026-02-24T21:41:31.225145",
+  "dataset": "users",
+  "total_records": 50,
+  "total_fields": 17,
+  "field_names": [
+    "user_id",
+    "character_name",
+    "gender",
+    "age",
+    "profession",
+    "distribution_category",
+    "personality",
+    "interest",
+    "reading_intensity",
+    "reading_count",
+    "experience_level",
+    "experience_count",
+    "journey",
+    "reading_styles",
+    "total_interpretations",
+    "books_interpreted",
+    "timestamp"
+  ],
+  "numeric_fields": [
+    "age",
+    "reading_count",
+    "experience_count",
+    "total_interpretations"
+  ],
+  "numeric_statistics": {
+    "age": {
+      "count": 50.0,
+      "mean": 30.82,
+      "std": 8.45079394893444,
+      "min": 18.0,
+      "25%": 24.25,
+      "50%": 29.0,
+      "75%": 36.5,
+      "max": 49.0
+    },
+    "reading_count": {
+      "count": 50.0,
+      "mean": 22.82,
+      "std": 10.86783308292722,
+      "min": 6.0,
+      "25%": 16.25,
+      "50%": 21.0,
+      "75%": 30.0,
+      "max": 50.0
+    },
+    "experience_count": {
+      "count": 50.0,
+      "mean": 6.76,
+      "std": 5.389180392798376,
+      "min": 1.0,
+      "25%": 3.0,
+      "50%": 5.0,
+      "75%": 9.75,
+      "max": 25.0
+    },
+    "total_interpretations": {
+      "count": 50.0,
+      "mean": 9.0,
+      "std": 0.0,
+      "min": 9.0,
+      "25%": 9.0,
+      "50%": 9.0,
+      "75%": 9.0,
+      "max": 9.0
+    }
+  },
+  "categorical_fields": [
+    "user_id",
+    "character_name",
+    "gender",
+    "profession",
+    "distribution_category",
+    "personality",
+    "interest",
+    "reading_intensity",
+    "experience_level",
+    "journey",
+    "reading_styles",
+    "books_interpreted",
+    "timestamp"
+  ],
+  "categorical_summary": {
+    "user_id": {
+      "unique_values": 50,
+      "most_common": "user_aisha_thompson_d4d810ea"
+    },
+    "character_name": {
+      "unique_values": 50,
+      "most_common": "Aisha Thompson"
+    },
+    "gender": {
+      "unique_values": 2,
+      "most_common": "Female"
+    },
+    "profession": {
+      "unique_values": 49,
+      "most_common": "Teacher"
+    },
+    "distribution_category": {
+      "unique_values": 6,
+      "most_common": "DELIBERATE"
+    }
+  },
+  "schema_location": "/opt/airflow/data/schemas/users_schema.pbtxt"
+}

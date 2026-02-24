@@ -4,26 +4,31 @@ import json
 from datetime import datetime
 import os
 
-# Set up paths
-INPUT_DIR = 'data/input'
-OUTPUT_DIR = 'data/output'
-SCHEMA_DIR = 'schemas'
-REPORTS_DIR = 'reports'
+# ============================================================================
+# PATH RESOLUTION
+# Works inside Docker (/opt/airflow) and locally on Windows/Mac
+# ============================================================================
+BASE_DIR   = os.environ.get('AIRFLOW_HOME', '/opt/airflow')
+INPUT_DIR  = os.path.join(BASE_DIR, 'data', 'processed')
+OUTPUT_DIR = os.path.join(BASE_DIR, 'data', 'reports')
+SCHEMA_DIR = os.path.join(BASE_DIR, 'data', 'schemas')
+REPORTS_DIR = os.path.join(BASE_DIR, 'data', 'reports')
 
 # Ensure output directories exist
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(SCHEMA_DIR, exist_ok=True)
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
+
 def flatten_dataframe(df, dataset_name):
     """Aggressively flatten nested structures in dataframe"""
     print(f"\n[Flattening] Processing {dataset_name}...")
     df_flat = df.copy()
-    
+
     for col in df_flat.columns:
         if df_flat[col].dtype == 'object':
             first_val = df_flat[col].dropna().iloc[0] if len(df_flat[col].dropna()) > 0 else None
-            
+
             # If it's a dict, flatten it
             if isinstance(first_val, dict):
                 print(f"  ✓ Flattening dict column: {col}")
@@ -36,7 +41,7 @@ def flatten_dataframe(df, dataset_name):
                 df_flat[col] = df_flat[col].apply(
                     lambda x: ', '.join(map(str, x)) if isinstance(x, list) else str(x)
                 )
-    
+
     # Check for any remaining complex types and convert to JSON strings
     for col in df_flat.columns:
         if df_flat[col].dtype == 'object':
@@ -46,13 +51,18 @@ def flatten_dataframe(df, dataset_name):
                 df_flat[col] = df_flat[col].apply(
                     lambda x: json.dumps(x) if isinstance(x, (dict, list)) else str(x)
                 )
-    
+
     print(f"  ✓ Final column count: {len(df_flat.columns)}")
     return df_flat
+
 
 print("=" * 80)
 print("STEP 10: Data Schema & Statistics Generation with TFDV")
 print("=" * 80)
+print(f"\nUsing paths:")
+print(f"  INPUT_DIR  : {INPUT_DIR}")
+print(f"  OUTPUT_DIR : {OUTPUT_DIR}")
+print(f"  SCHEMA_DIR : {SCHEMA_DIR}")
 
 # ============================================================================
 # PART 1: PROCESS MOMENTS DATA
@@ -62,7 +72,7 @@ print("PART 1: Processing moments_processed.json")
 print("=" * 80)
 
 print("\n[1/6] Loading moments_processed.json...")
-with open(f'{INPUT_DIR}/moments_processed.json', 'r') as f:
+with open(os.path.join(INPUT_DIR, 'moments_processed.json'), 'r') as f:
     moments_data = json.load(f)
 
 moments_df = pd.DataFrame(moments_data)
@@ -83,7 +93,7 @@ print("\n[5/6] Displaying schema...")
 tfdv.display_schema(moments_schema)
 
 print("\n[6/6] Saving outputs...")
-moments_schema_path = f'{SCHEMA_DIR}/moments_schema.pbtxt'
+moments_schema_path = os.path.join(SCHEMA_DIR, 'moments_schema.pbtxt')
 tfdv.write_schema_text(moments_schema, moments_schema_path)
 print(f"   ✓ Schema saved to: {moments_schema_path}")
 
@@ -93,7 +103,7 @@ if moments_anomalies.anomaly_info:
     print("   ⚠ Anomalies detected:")
     for feature_name, anomaly_info in moments_anomalies.anomaly_info.items():
         print(f"      - {feature_name}: {anomaly_info.description}")
-    moments_anomalies_path = f'{REPORTS_DIR}/moments_anomalies.txt'
+    moments_anomalies_path = os.path.join(REPORTS_DIR, 'moments_anomalies.txt')
     with open(moments_anomalies_path, 'w') as f:
         f.write(str(moments_anomalies))
     print(f"   ✓ Anomalies report saved to: {moments_anomalies_path}")
@@ -136,7 +146,7 @@ if len(categorical_cols) > 0:
 
 moments_stats_dict['schema_location'] = moments_schema_path
 
-moments_stats_json_path = f'{OUTPUT_DIR}/moments_statistics_summary.json'
+moments_stats_json_path = os.path.join(OUTPUT_DIR, 'moments_statistics_summary.json')
 with open(moments_stats_json_path, 'w') as f:
     json.dump(moments_stats_dict, f, indent=2)
 print(f"\n✓ Moments statistics JSON saved to: {moments_stats_json_path}")
@@ -149,7 +159,7 @@ print("PART 2: Processing users_processed.json")
 print("=" * 80)
 
 print("\n[1/6] Loading users_processed.json...")
-with open(f'{INPUT_DIR}/users_processed.json', 'r') as f:
+with open(os.path.join(INPUT_DIR, 'users_processed.json'), 'r') as f:
     users_data = json.load(f)
 
 users_df = pd.DataFrame(users_data)
@@ -170,7 +180,7 @@ print("\n[5/6] Displaying schema...")
 tfdv.display_schema(users_schema)
 
 print("\n[6/6] Saving outputs...")
-users_schema_path = f'{SCHEMA_DIR}/users_schema.pbtxt'
+users_schema_path = os.path.join(SCHEMA_DIR, 'users_schema.pbtxt')
 tfdv.write_schema_text(users_schema, users_schema_path)
 print(f"   ✓ Schema saved to: {users_schema_path}")
 
@@ -179,7 +189,7 @@ if users_anomalies.anomaly_info:
     print("   ⚠ Anomalies detected:")
     for feature_name, anomaly_info in users_anomalies.anomaly_info.items():
         print(f"      - {feature_name}: {anomaly_info.description}")
-    users_anomalies_path = f'{REPORTS_DIR}/users_anomalies.txt'
+    users_anomalies_path = os.path.join(REPORTS_DIR, 'users_anomalies.txt')
     with open(users_anomalies_path, 'w') as f:
         f.write(str(users_anomalies))
     print(f"   ✓ Anomalies report saved to: {users_anomalies_path}")
@@ -221,7 +231,7 @@ if len(categorical_user_cols) > 0:
 
 users_stats_dict['schema_location'] = users_schema_path
 
-users_stats_json_path = f'{OUTPUT_DIR}/users_statistics_summary.json'
+users_stats_json_path = os.path.join(OUTPUT_DIR, 'users_statistics_summary.json')
 with open(users_stats_json_path, 'w') as f:
     json.dump(users_stats_dict, f, indent=2)
 print(f"\n✓ Users statistics JSON saved to: {users_stats_json_path}")
@@ -234,7 +244,7 @@ print("PART 3: Processing books_processed.json")
 print("=" * 80)
 
 print("\n[1/6] Loading books_processed.json...")
-with open(f'{INPUT_DIR}/books_processed.json', 'r') as f:
+with open(os.path.join(INPUT_DIR, 'books_processed.json'), 'r') as f:
     books_data = json.load(f)
 
 books_df = pd.DataFrame(books_data)
@@ -255,7 +265,7 @@ print("\n[5/6] Displaying schema...")
 tfdv.display_schema(books_schema)
 
 print("\n[6/6] Saving outputs...")
-books_schema_path = f'{SCHEMA_DIR}/books_schema.pbtxt'
+books_schema_path = os.path.join(SCHEMA_DIR, 'books_schema.pbtxt')
 tfdv.write_schema_text(books_schema, books_schema_path)
 print(f"   ✓ Schema saved to: {books_schema_path}")
 
@@ -264,7 +274,7 @@ if books_anomalies.anomaly_info:
     print("   ⚠ Anomalies detected:")
     for feature_name, anomaly_info in books_anomalies.anomaly_info.items():
         print(f"      - {feature_name}: {anomaly_info.description}")
-    books_anomalies_path = f'{REPORTS_DIR}/books_anomalies.txt'
+    books_anomalies_path = os.path.join(REPORTS_DIR, 'books_anomalies.txt')
     with open(books_anomalies_path, 'w') as f:
         f.write(str(books_anomalies))
     print(f"   ✓ Anomalies report saved to: {books_anomalies_path}")
@@ -306,7 +316,7 @@ if len(categorical_books_cols) > 0:
 
 books_stats_dict['schema_location'] = books_schema_path
 
-books_stats_json_path = f'{OUTPUT_DIR}/books_statistics_summary.json'
+books_stats_json_path = os.path.join(OUTPUT_DIR, 'books_statistics_summary.json')
 with open(books_stats_json_path, 'w') as f:
     json.dump(books_stats_dict, f, indent=2)
 print(f"\n✓ Books statistics JSON saved to: {books_stats_json_path}")
