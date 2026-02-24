@@ -6,6 +6,14 @@ Callable from DAG via run_schema_stats() or standalone via __main__.
 Path resolution: Uses REPO_ROOT env var (set by docker-compose) or defaults.
 """
 
+"""
+TFDV Schema & Statistics Generation
+Generates schema, statistics, and anomaly reports for processed data.
+Callable from DAG via run_schema_stats() or standalone via __main__.
+
+Path resolution: Uses REPO_ROOT env var (set by docker-compose) or defaults.
+"""
+
 import tensorflow_data_validation as tfdv
 import pandas as pd
 import json
@@ -15,12 +23,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def flatten_dataframe(df, dataset_name):
     """Aggressively flatten nested structures in dataframe."""
     logger.info(f"Flattening {dataset_name}...")
     df_flat = df.copy()
-
 
     for col in df_flat.columns:
         if df_flat[col].dtype == 'object':
