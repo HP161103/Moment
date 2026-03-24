@@ -335,7 +335,7 @@ jobs:
       - name: Save new baseline metrics to GCS
         run: |
           gcloud storage cp new_metrics.json \
-            gs://${{ secrets.GCS_BUCKET }}/metrics_baseline.json
+            gs://moment-agent-data/metrics_baseline.json
 
       - name: Notify on successful deployment
         if: success()
