@@ -1,7 +1,7 @@
 import os
 import json
-from google import genai
-from google.genai import types
+import google.generativeai as genai
+from google.generativeai import types
 
 from tools import extract_json, _read_json_file, _write_json_file
 

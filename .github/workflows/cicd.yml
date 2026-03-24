@@ -120,7 +120,7 @@ jobs:
               gate = run_validation_gate(results)
               notify_validation_failure(gate['metrics'], gate['failures'])
           except Exception as e:
-              notify_pipeline_failure('validate', str(e))
+              notify_validation_failure({'error': str(e)}, [str(e)])
           "
 
       - name: Upload validation results

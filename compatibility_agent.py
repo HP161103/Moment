@@ -3,8 +3,8 @@ import re
 import os
 import textwrap
 from datetime import datetime
-from google import genai
-from google.genai import types # type: ignore
+import google.generativeai as genai # type: ignore
+from google.generativeai import types # type: ignore
 
 from tools import (
     COMPAT_LOG_FILE,
