@@ -4,7 +4,7 @@ import os
 import textwrap
 from datetime import datetime
 from google import genai
-from google.genai import types
+from google.genai import types # type: ignore
 
 from tools import (
     COMPAT_LOG_FILE,
