@@ -23,7 +23,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from model_interface import (
     decompose_moment,
-    score_compatibility,
     run_compatibility_pipeline,
     health_check,
 )
