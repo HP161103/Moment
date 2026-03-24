@@ -6,6 +6,7 @@ name: Momento — CI/CD Pipeline
 # Runs on every push/PR that touches model-related code.
 # Paths filter avoids triggering on doc-only or frontend-only changes.
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
