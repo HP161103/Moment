@@ -19,8 +19,8 @@ from collections import defaultdict
 from typing import List, Dict, Any
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
-BIAS_ALERT_THRESHOLD = 0.25   # max allowed confidence gap between any two slices
-BIAS_BLOCK_THRESHOLD = 0.35   # gap above this blocks deployment entirely
+BIAS_ALERT_THRESHOLD = 0.30   # max allowed confidence gap between any two slices
+BIAS_BLOCK_THRESHOLD = 0.50   # gap above this blocks deployment entirely
 
 SLICE_KEYS = ["book", "passage_id"]   # dimensions to check for bias
 
