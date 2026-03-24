@@ -136,7 +136,6 @@ def deploy_all():
     decompose_remote = agent_engines.create(
         DecomposeAgentApp(),
         requirements=REQUIREMENTS,
-        staging_bucket=BUCKET,
         display_name="momento-decompose-agent",
     )
     print(f"Decompose Agent deployed:      {decompose_remote.resource_name}")
@@ -144,7 +143,6 @@ def deploy_all():
     compat_remote = agent_engines.create(
         CompatibilityAgentApp(),
         requirements=REQUIREMENTS,
-        staging_bucket=BUCKET,
         display_name="momento-compatibility-agent",
     )
     print(f"Compatibility Agent deployed:  {compat_remote.resource_name}")
@@ -152,7 +150,6 @@ def deploy_all():
     profile_remote = agent_engines.create(
         ProfileAgentApp(),
         requirements=REQUIREMENTS,
-        staging_bucket=BUCKET,
         display_name="momento-profile-agent",
     )
     print(f"Profile Agent deployed:        {profile_remote.resource_name}")
