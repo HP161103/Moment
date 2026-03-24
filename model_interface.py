@@ -174,6 +174,7 @@ def health_check() -> dict:
         "status": "ok",
         "interface_version": "2.0.0",
         "stub_mode": True,
+        "functions": ["decompose_moment", "run_compatibility_pipeline", "run_batch_compatibility"],
         "agents": {
             "decomposer":   "decomposing_agent.run_decomposer",
             "scorer":       "compatibility_agent.run_compatibility_agent",
