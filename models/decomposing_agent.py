@@ -3,7 +3,9 @@ import json
 from google import genai
 from google.genai import types # type: ignore
 
-from tools import extract_json, save_decomposition, get_decomposition
+from tools import extract_json, _read_json_file, _write_json_file
+
+DECOMPOSITIONS_FILE = "data/processed/decompositions.json"
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -32,6 +34,14 @@ You are the Moment Decomposition Agent for Momento.
 You will be given a single reader moment on a passage.
 Decompose it into sub-claims and assign an emotional mode to each.
 Output only the final JSON — no preamble, no markdown fences.
+
+════════════════════════════════════════════════════════════
+DEFINITIONS
+════════════════════════════════════════════════════════════
+
+RESONATE (R): same subject, compatible positions — mutually reinforcing
+CONTRADICT (C): same subject, opposing positions — mutually exclusive
+DIVERGE (D): different subjects — no shared ground
 
 ════════════════════════════════════════════════════════════
 STEP 1 — DECOMPOSE
@@ -124,12 +134,10 @@ _SUBCLAIM_REQUIRED_KEYS  = {"id", "claim", "quote", "weight", "emotional_mode"}
 def run_decomposer(user_id: str, passage_id: str, book_id: str, moment_text: str) -> dict:
     """
     Decompose a single reader moment into weighted sub-claims with emotional modes.
-    Saves result to BQ via tools.save_decomposition().
 
     Args:
         user_id:      reader identifier
         passage_id:   passage identifier
-        book_id:      book identifier
         moment_text:  the raw moment text written by the reader
 
     Returns:
@@ -174,12 +182,24 @@ def run_decomposer(user_id: str, passage_id: str, book_id: str, moment_text: str
         return {"error": f"subclaim weights sum to {sum(weights):.2f}", "raw": result, "user_id": user_id}
 
     print(f"[Decomposer] decomposition ready: {len(result['subclaims'])} subclaims")
-    # Save to BQ — main.py also calls this but safe to call here too (upsert)
-    save_decomposition(result)
+    _save_decomposition(result)
     return result
 
 
-# ── Helper ────────────────────────────────────────────────────────────────────
+def _save_decomposition(result: dict) -> None:
+    """Upsert decomposition into decompositions.json keyed by user_id + passage_id."""
+    data = _read_json_file(DECOMPOSITIONS_FILE,[]) or []
+    key  = (result["user_id"], result["passage_id"])
+
+    # replace existing entry for same user+passage, otherwise append
+    updated = [d for d in data if (d["user_id"], d["passage_id"]) != key]
+    updated.append(result)
+
+    _write_json_file(DECOMPOSITIONS_FILE, updated)
+    print(f"[Decomposer] saved to {DECOMPOSITIONS_FILE}")
+
+
+# ── Helper (mirrors agent.py) ─────────────────────────────────────────────────
 
 def _get_response_text(response) -> str | None:
     try:
