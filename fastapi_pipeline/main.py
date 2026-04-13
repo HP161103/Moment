@@ -1,86 +1,57 @@
 """
 main.py — MOMENT FastAPI Data Pipeline
 =======================================
-Incremental pipeline using BQ watermark:
+Daily pipeline — processes only today's moments:
   POST /pipeline/run
-    1. Read watermark from BQ (last processed created_at)
-    2. Cloud SQL → fetch only NEW moments (created_at > watermark)
-    3. Preprocess → write to BQ
-    4. BQ moments_processed → compatibility agent → write to BQ
-    5. Update watermark in BQ
+    1. Cloud SQL → fetch moments where DATE(created_at) = CURRENT_DATE
+    2. Preprocess → write to BQ (moments, passages, books, users)  [synchronous]
+    3. For each valid moment → _run_batch_compatibility() in background
+       (matches against existing BQ users only, not the incoming batch)
+    4. Rankings → refit BT model per processed user → write to BQ (background)
+
+Other endpoints:
+  POST /feedback                   — log pairwise comparison (feeds BT model)
+  GET  /rankings/{user_id}         — retrieve stored ranked results
+  GET  /health
+  GET  /pipeline/status
 """
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
-from itertools import combinations
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
-from google.cloud import bigquery
 
+from compatibility_agent import run_compatibility_agent
 from cloudsql_loader import CloudSQLLoader
 from preprocessor_fastapi import preprocess_all
 from bq_writer import write_to_bq
-from tools import get_moments_for_passage
-from compatibility_agent import run_compatibility_agent
+from tools import get_moments_for_passage, insert_comparison, get_rankings
+from run_rankings import refit_user
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="MOMENT Data Pipeline",
-    description="Incremental: Cloud SQL (new moments only) → Preprocess → BQ → Compatibility → BQ",
-    version="3.0.0",
+    description="Daily: Cloud SQL (today's moments) → Preprocess → BQ → Compatibility (background) → Rankings (background)",
+    version="6.0.0",
 )
-
-BQ_PROJECT  = os.environ.get("GOOGLE_CLOUD_PROJECT", "moment-486719")
-BQ_DATASET  = os.environ.get("BQ_DATASET", "new_moments_processed")
-WATERMARK_TABLE = f"{BQ_PROJECT}.{BQ_DATASET}.pipeline_watermark"
 
 _last_run: dict = {}
 
 
-# ── Watermark helpers ─────────────────────────────────────────────────────────
+# ── Pydantic models ───────────────────────────────────────────────────────────
 
-def _get_watermark() -> Optional[str]:
-    """Read last processed timestamp from BQ. Returns ISO string or None."""
-    client = bigquery.Client(project=BQ_PROJECT)
-    try:
-        rows = list(client.query(
-            f"SELECT last_processed_at FROM `{WATERMARK_TABLE}` ORDER BY last_processed_at DESC LIMIT 1"
-        ).result())
-        if rows:
-            val = rows[0]["last_processed_at"]
-            return val.isoformat() if hasattr(val, 'isoformat') else str(val)
-        return None
-    except Exception as e:
-        logger.warning(f"Could not read watermark (table may not exist yet): {e}")
-        return None
-
-
-def _set_watermark(ts: str):
-    """Upsert the watermark timestamp into BQ."""
-    client = bigquery.Client(project=BQ_PROJECT)
-    try:
-        # Create table if not exists
-        client.query(f"""
-            CREATE TABLE IF NOT EXISTS `{WATERMARK_TABLE}` (
-                last_processed_at TIMESTAMP,
-                updated_at TIMESTAMP
-            )
-        """).result()
-
-        # Delete old row and insert new
-        client.query(f"DELETE FROM `{WATERMARK_TABLE}` WHERE TRUE").result()
-        client.query(f"""
-            INSERT INTO `{WATERMARK_TABLE}` (last_processed_at, updated_at)
-            VALUES (TIMESTAMP('{ts}'), CURRENT_TIMESTAMP())
-        """).result()
-        logger.info(f"Watermark updated to {ts}")
-    except Exception as e:
-        logger.error(f"Failed to update watermark: {e}")
+class FeedbackRequest(BaseModel):
+    user_id:           str
+    winner_run_id:     str
+    loser_run_id:      str
+    session_id:        str
+    winner_confidence: Optional[float] = None
+    winner_verdict:    Optional[str]   = None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -90,59 +61,46 @@ def health():
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
 
-@app.get("/pipeline/watermark")
-def get_watermark():
-    """Check current watermark (last processed timestamp)."""
-    wm = _get_watermark()
-    return {"watermark": wm or "none — full run will execute"}
-
-
 @app.post("/pipeline/run")
-def run_pipeline(full: bool = False):
+def run_pipeline(background_tasks: BackgroundTasks):
     """
-    Incremental pipeline — only processes moments newer than last run.
-    Pass ?full=true to reprocess everything from scratch.
+    Daily pipeline — triggered manually or via Cloud Scheduler.
+    Steps 1–3 (load, preprocess, BQ write) run synchronously.
+    Compatibility and rankings run in the background per valid moment.
     """
     global _last_run
     start = datetime.utcnow()
     logger.info("=" * 60)
-
-    # ── Read watermark ────────────────────────────────────────────
-    watermark = None if full else _get_watermark()
-    if watermark:
-        logger.info(f"Incremental run — processing moments since {watermark}")
-    else:
-        logger.info("Full run — processing all moments")
+    logger.info(f"Pipeline run started at {start.isoformat()}")
 
     # ── Step 1: Load from Cloud SQL ───────────────────────────────
-    logger.info("Step 1/4: Loading from Cloud SQL...")
+    logger.info("Step 1/3: Loading today's moments from Cloud SQL...")
     try:
-        loader = CloudSQLLoader(since=watermark)
+        loader = CloudSQLLoader()
         loader.run()
         dfs = loader.get_dataframes()
     except Exception as e:
         logger.error(f"Cloud SQL load failed: {e}")
         raise HTTPException(status_code=500, detail=f"Cloud SQL load failed: {str(e)}")
 
-    new_count = len(dfs["interpretations_train"])
+    new_count = len(dfs["moments_raw"])
     if new_count == 0:
-        logger.info("No new moments since last run — pipeline skipped")
+        logger.info("No moments created today — pipeline skipped")
         return {
-            "status":        "skipped",
-            "reason":        "no new moments since last run",
-            "watermark":     watermark,
-            "duration_sec":  round((datetime.utcnow() - start).total_seconds(), 2),
+            "status":       "skipped",
+            "reason":       "no moments created today",
+            "duration_sec": round((datetime.utcnow() - start).total_seconds(), 2),
         }
 
-    logger.info(f"  {new_count} new moments to process")
+    logger.info(f"  {new_count} moments to process today")
 
     # ── Step 2: Preprocess ────────────────────────────────────────
-    logger.info("Step 2/4: Preprocessing...")
+    logger.info("Step 2/3: Preprocessing...")
     try:
-        moments, books, users = preprocess_all(
-            interpretations_df=dfs["interpretations_train"],
-            passages_df=dfs["passage_details_new"],
-            users_df=dfs["user_details_new"],
+        moments, passages, books, users = preprocess_all(
+            moments_df=dfs["moments_raw"],
+            books_df=dfs["books_raw"],
+            users_df=dfs["users_raw"],
         )
     except Exception as e:
         logger.error(f"Preprocessing failed: {e}")
@@ -152,20 +110,19 @@ def run_pipeline(full: bool = False):
     logger.info(f"  {len(moments)} processed ({len(valid_moments)} valid)")
 
     # ── Step 3: Write to BQ ───────────────────────────────────────
-    logger.info("Step 3/4: Writing to BQ...")
+    logger.info("Step 3/3: Writing to BQ...")
     try:
-        bq_tables = write_to_bq(moments, books, users)
+        bq_tables = write_to_bq(moments, passages, books, users)
     except Exception as e:
         logger.error(f"BQ write failed: {e}")
         raise HTTPException(status_code=500, detail=f"BQ write failed: {str(e)}")
 
-    # ── Step 4: Compatibility ─────────────────────────────────────
-    logger.info("Step 4/4: Running compatibility agent...")
-    compat_runs   = 0
-    compat_errors = 0
+    logger.info("Synchronous steps complete. Queuing compatibility + rankings in background.")
 
-    # For each new moment, run compatibility against all existing moments
-    # on the same passage (fetched from BQ moments_processed)
+    # ── Steps 4+5: Compatibility + Rankings (background) ─────────
+    # Each valid moment is matched independently against existing BQ users.
+    # Moments in today's batch do NOT match each other (only match against
+    # users already in BQ before this run).
     for m in valid_moments:
         user_id    = str(m.get("user_id", ""))
         passage_id = str(m.get("passage_id", ""))
@@ -175,63 +132,65 @@ def run_pipeline(full: bool = False):
         if not user_id or not passage_id or not interp:
             continue
 
-        # Get all OTHER users with moments on same passage from BQ
-        try:
-            others = get_moments_for_passage(book_id, passage_id, exclude_user_id=user_id)
-        except Exception as e:
-            logger.warning(f"  Could not fetch passage moments: {e}")
-            continue
-
-        if not others:
-            logger.info(f"  No other users on passage {passage_id} yet")
-            continue
-
-        for other in others:
-            other_user_id = str(other["user_id"])
-            other_text    = other.get("cleaned_interpretation", "")
-            if not other_text:
-                continue
-            try:
-                result = run_compatibility_agent(
-                    user_a_id=user_id,
-                    user_b_id=other_user_id,
-                    book_id=book_id,
-                    moment_a={"passage_id": passage_id, "cleaned_interpretation": interp},
-                    moment_b={"passage_id": passage_id, "cleaned_interpretation": other_text},
-                )
-                if "error" in result:
-                    logger.warning(f"  Compat error {user_id}×{other_user_id}: {result['error']}")
-                    compat_errors += 1
-                else:
-                    compat_runs += 1
-                    logger.info(f"  ✓ {user_id}×{other_user_id}: {result.get('dominant_think')} ({result.get('confidence')})")
-            except Exception as e:
-                logger.error(f"  Exception {user_id}×{other_user_id}: {e}")
-                compat_errors += 1
-
-    # ── Update watermark ──────────────────────────────────────────
-    new_watermark = start.isoformat()
-    _set_watermark(new_watermark)
+        background_tasks.add_task(
+            _run_batch_compatibility,
+            user_id, book_id, passage_id, interp,
+        )
 
     duration = (datetime.utcnow() - start).total_seconds()
-    logger.info(f"Pipeline complete in {duration:.2f}s")
+    logger.info(f"Pipeline synchronous phase complete in {duration:.2f}s")
     logger.info("=" * 60)
 
     result = {
-        "status":        "success",
-        "timestamp":     start.isoformat(),
-        "watermark":     new_watermark,
-        "moments_count": len(moments),
-        "books_count":   len(books),
-        "users_count":   len(users),
-        "valid_moments": len(valid_moments),
-        "bq_tables":     bq_tables,
-        "compat_runs":   compat_runs,
-        "compat_errors": compat_errors,
-        "duration_sec":  round(duration, 2),
+        "status":           "success",
+        "timestamp":        start.isoformat(),
+        "moments_count":    len(moments),
+        "passages_count":   len(passages),
+        "books_count":      len(books),
+        "users_count":      len(users),
+        "valid_moments":    len(valid_moments),
+        "bq_tables":        bq_tables,
+        "compat_queued":    len(valid_moments),
+        "duration_sec":     round(duration, 2),
     }
     _last_run = result
     return result
+
+
+@app.post("/feedback")
+def feedback(req: FeedbackRequest, background_tasks: BackgroundTasks):
+    """Log an implicit pairwise comparison. Triggers BT rerank in background."""
+    record = {
+        "comparison_id":     f"cmp_{abs(hash((req.user_id, req.winner_run_id, req.loser_run_id, req.session_id))):08x}",
+        "user_id":           req.user_id,
+        "session_id":        req.session_id,
+        "winner_run_id":     req.winner_run_id,
+        "loser_run_id":      req.loser_run_id,
+        "winner_confidence": req.winner_confidence,
+        "winner_verdict":    req.winner_verdict,
+        "timestamp":         datetime.utcnow().isoformat(),
+    }
+    insert_comparison(record)
+    background_tasks.add_task(_refit_and_save_rankings, req.user_id)
+    return {"status": "recorded", "comparison_id": record["comparison_id"]}
+
+
+@app.get("/rankings/{user_id}")
+def rankings(
+    user_id:    str,
+    book_id:    Optional[str] = None,
+    passage_id: Optional[str] = None,
+    k:          int = 5,
+):
+    """
+    Return top-k ranked matches for a user.
+    Refits BT model synchronously so results are always fresh.
+    """
+    _refit_and_save_rankings(user_id, book_id=book_id, passage_id=passage_id, k=k)
+    rows = get_rankings(user_id, book_id=book_id, passage_id=passage_id)
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"No rankings found for {user_id}")
+    return {"user_id": user_id, "rankings": rows}
 
 
 @app.get("/pipeline/status")
@@ -239,3 +198,83 @@ def pipeline_status():
     if not _last_run:
         return {"status": "no_runs_yet"}
     return _last_run
+
+
+# ── Background: batch compatibility ──────────────────────────────────────────
+
+def _run_batch_compatibility(
+    user_id:        str,
+    book_id:        str,
+    passage_id:     str,
+    interpretation: str,
+) -> None:
+    """
+    Run compatibility between one processed moment and every existing BQ user
+    on the same passage. Runs rankings refit for this user once all compat
+    runs are complete.
+
+    Only matches against users already in BQ — moments ingested in the same
+    pipeline run are excluded (get_moments_for_passage uses exclude_user_id,
+    and BQ is written before this task starts so same-batch users will appear,
+    but passage-level deduplication in the compat agent handles exact pairs).
+    """
+    logger.info(f"[Compat] starting batch for {user_id} on {book_id}/{passage_id}")
+
+    try:
+        other_moments = get_moments_for_passage(book_id, passage_id, exclude_user_id=user_id)
+    except Exception as e:
+        logger.warning(f"[Compat] could not fetch passage moments for {passage_id}: {e}")
+        return
+
+    if not other_moments:
+        logger.info(f"[Compat] no other users on passage {passage_id} — skipping")
+        return
+
+    logger.info(f"[Compat] running {len(other_moments)} comparisons for {user_id}")
+    compat_runs   = 0
+    compat_errors = 0
+
+    for other in other_moments:
+        other_user_id = str(other["user_id"])
+        other_text    = other.get("cleaned_interpretation", "")
+        if not other_text:
+            continue
+
+        try:
+            result = run_compatibility_agent(
+                user_a_id=user_id,
+                user_b_id=other_user_id,
+                book_id=book_id,
+                moment_a={"passage_id": passage_id, "cleaned_interpretation": interpretation},
+                moment_b={"passage_id": passage_id, "cleaned_interpretation": other_text},
+            )
+            if "error" in result:
+                logger.warning(f"[Compat] error {user_id}×{other_user_id}: {result['error']}")
+                compat_errors += 1
+            else:
+                compat_runs += 1
+                logger.info(f"[Compat] ✓ {user_id}×{other_user_id}: {result.get('dominant_think')} ({result.get('confidence')})")
+        except Exception as e:
+            logger.error(f"[Compat] exception {user_id}×{other_user_id}: {e}")
+            compat_errors += 1
+
+    logger.info(f"[Compat] complete for {user_id} — {compat_runs} runs, {compat_errors} errors")
+
+    # Refit rankings for this user now that new compat runs are logged
+    try:
+        refit_user(user_id)
+        logger.info(f"[Rankings] ✓ updated for {user_id}")
+    except Exception as e:
+        logger.error(f"[Rankings] error for {user_id}: {e}")
+
+
+# ── Background: rankings refit ────────────────────────────────────────────────
+
+def _refit_and_save_rankings(
+    user_id:    str,
+    book_id:    Optional[str] = None,
+    passage_id: Optional[str] = None,
+    k:          int = 5,
+) -> None:
+    """Thin wrapper — delegates all BT logic to run_rankings.refit_user()."""
+    refit_user(user_id, book_id=book_id, passage_id=passage_id, k=k)

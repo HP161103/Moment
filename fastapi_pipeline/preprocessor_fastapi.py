@@ -2,7 +2,7 @@
 preprocessor_fastapi.py — MOMENT Preprocessing (FastAPI version)
 =================================================================
 Config hardcoded. Input: DataFrames from CloudSQLLoader.
-Output: (moments, books, users) as lists of dicts.
+Output: (moments, passages, books, users) as lists of dicts.
 """
 
 import re
@@ -17,8 +17,6 @@ import textstat
 from langdetect import detect, LangDetectException
 
 logger = logging.getLogger(__name__)
-
-# ── Hardcoded config ──────────────────────────────────────────────────────────
 
 CFG = {
     "validation": {
@@ -42,18 +40,6 @@ PROFANITY = {
     "shit", "fuck", "piss", "dick", "cock", "cunt",
     "whore", "slut", "fag", "retard"
 }
-
-
-# ── ID generation ─────────────────────────────────────────────────────────────
-
-def _hash(text, length=8):
-    return hashlib.md5(text.encode("utf-8")).hexdigest()[:length]
-
-def make_book_id(gutenberg_id):
-    return f"gutenberg_{gutenberg_id}"
-
-def make_interpretation_id(user_id, passage_key, text):
-    return f"moment_{_hash(str(user_id) + str(passage_key) + text[:100])}"
 
 
 # ── Text cleaning ─────────────────────────────────────────────────────────────
@@ -130,7 +116,7 @@ def validate_text(text):
     return {
         "is_valid": len(issues) == 0 and score >= v["quality_threshold"],
         "quality_score": round(score, 4),
-        "quality_issues": issues,
+        "quality_issues": "; ".join(issues) if issues else "",
         "word_count": word_count,
         "language": language,
     }
@@ -141,8 +127,8 @@ def validate_text(text):
 def detect_issues(text):
     ic = CFG["issues"]
     if not text:
-        return {"has_pii": False, "pii_types": [], "has_profanity": False,
-                "profanity_ratio": 0.0, "is_spam": False, "spam_reasons": []}
+        return {"has_pii": False, "pii_types": "", "has_profanity": False,
+        "profanity_ratio": 0.0, "is_spam": False, "spam_reasons": ""}
 
     pii_types, spam_reasons = [], []
 
@@ -163,13 +149,13 @@ def detect_issues(text):
             spam_reasons.append(f"excessive_caps: {caps_ratio:.1%}")
 
     return {
-        "has_pii": len(pii_types) > 0,
-        "pii_types": pii_types,
-        "has_profanity": has_profanity,
-        "profanity_ratio": profanity_ratio,
-        "is_spam": len(spam_reasons) > 0,
-        "spam_reasons": spam_reasons,
-    }
+    "has_pii":        len(pii_types) > 0,
+    "pii_types":      "; ".join(pii_types) if pii_types else "",
+    "has_profanity":  has_profanity,
+    "profanity_ratio":profanity_ratio,
+    "is_spam":        len(spam_reasons) > 0,
+    "spam_reasons":   "; ".join(spam_reasons) if spam_reasons else "",
+}
 
 
 # ── Metrics ───────────────────────────────────────────────────────────────────
@@ -198,97 +184,121 @@ def calculate_metrics(text):
         readability = 0.0
 
     return {
-        "word_count": word_count, "char_count": char_count,
-        "sentence_count": sentence_count, "avg_word_length": avg_word_length,
-        "avg_sentence_length": avg_sent_length,
-        "readability_score": round(readability, 2),
+        "word_count":         word_count,
+        "char_count":         char_count,
+        "sentence_count":     sentence_count,
+        "avg_word_length":    avg_word_length,
+        "avg_sentence_length":avg_sent_length,
+        "readability_score":  round(readability, 2),
     }
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def preprocess_all(
-    interpretations_df: pd.DataFrame,
-    passages_df:        pd.DataFrame,
-    users_df:           pd.DataFrame,
-) -> Tuple[List[dict], List[dict], List[dict]]:
+    moments_df: pd.DataFrame,
+    books_df:   pd.DataFrame,
+    users_df:   pd.DataFrame,
+) -> Tuple[List[dict], List[dict], List[dict], List[dict]]:
+    """Returns (moments, passages, books, users)"""
     ts = datetime.now().strftime(CFG["timestamp_format"])
-    moments = _process_moments(interpretations_df, ts)
-    books   = _process_books(passages_df, ts)
-    users   = _process_users(users_df, ts)
-    return moments, books, users
+    moments, passages = _process_moments(moments_df, ts)
+    books             = _process_books(books_df, ts)
+    users             = _process_users(users_df, ts)
+    return moments, passages, books, users
 
 
-def _process_moments(df: pd.DataFrame, ts: str) -> List[dict]:
-    records = []
+def _process_moments(df: pd.DataFrame, ts: str) -> Tuple[List[dict], List[dict]]:
+    """
+    Split moments into:
+    - moments_processed: all fields except passage text
+    - passages_processed: book_id, passage_id, passage text
+    """
+    moments  = []
+    passages = []
+    seen_passages = set()  # deduplicate passages
+
     for _, row in df.iterrows():
         try:
-            user_id      = row.get("user_id", "")
-            book_title   = str(row.get("book", ""))
-            gutenberg_id = str(row.get("gutenberg_id", "")) if "gutenberg_id" in row else ""
-            passage_key  = str(row.get("passage_key", ""))
-            raw_text     = str(row.get("interpretation", ""))
-
-            if gutenberg_id and gutenberg_id not in ("", "None", "nan"):
-                book_id = make_book_id(gutenberg_id)
-            else:
-                book_id = str(row.get("passage_id", ""))
+            moment_id  = str(row.get("moment_id", ""))
+            user_id    = str(row.get("user_id", ""))    # UUID, no hashing
+            book_id    = str(row.get("book_id", ""))    # books.id UUID
+            passage_id = str(row.get("passage_id", "")) # passage_key
+            passage    = str(row.get("passage", ""))
+            raw_text   = str(row.get("interpretation", ""))
 
             cleaned    = clean_text(raw_text)
             validation = validate_text(cleaned)
             issues     = detect_issues(cleaned)
             metrics    = calculate_metrics(cleaned)
-            interp_id  = make_interpretation_id(user_id, passage_key, cleaned)
 
-            records.append({
-                "interpretation_id":      interp_id,
-                "user_id":                str(user_id),
+            # ── moments_processed ────────────────────────────────
+            moments.append({
+                "moment_id":              moment_id,
+                "user_id":                user_id,
                 "book_id":                book_id,
-                "passage_key":            passage_key,
-                "book_title":             book_title,
-                "book_author":            str(row.get("book_author", "")),
+                "passage_id":             passage_id,
                 "chapter":                str(row.get("chapter", "")),
                 "page_num":               row.get("page_num", None),
                 "cleaned_interpretation": cleaned,
                 "original_word_count":    row.get("word_count", 0),
                 "is_valid":               validation["is_valid"],
                 "quality_score":          validation["quality_score"],
-                "quality_issues":         str(validation["quality_issues"]),
-                "detected_issues":        str(issues),
-                "metrics":                str(metrics),
+                "quality_issues":         validation["quality_issues"],
+                "language":               validation["language"],
+                "has_pii":                issues["has_pii"],
+                "pii_types":              issues["pii_types"],
+                "has_profanity":          issues["has_profanity"],
+                "profanity_ratio":        issues["profanity_ratio"],
+                "is_spam":                issues["is_spam"],
+                "spam_reasons":           issues["spam_reasons"],
+                "word_count":             metrics["word_count"],
+                "char_count":             metrics["char_count"],
+                "sentence_count":         metrics["sentence_count"],
+                "avg_word_length":        metrics["avg_word_length"],
+                "avg_sentence_length":    metrics["avg_sentence_length"],
+                "readability_score":      metrics["readability_score"],
                 "created_at":             str(row.get("created_at", "")),
                 "timestamp":              ts,
             })
+
+            # ── passages_processed (deduplicated by passage_id) ──
+            if passage_id and passage_id not in seen_passages:
+                seen_passages.add(passage_id)
+                passages.append({
+                    "passage_id": passage_id,
+                    "book_id":    book_id,
+                    "passage":    passage,
+                })
+
         except Exception as e:
             logger.error(f"Error processing moment row: {e}")
             continue
 
-    logger.info(f"Processed {len(records)} moments")
-    return records
+    logger.info(f"Processed {len(moments)} moments, {len(passages)} passages")
+    return moments, passages
 
 
 def _process_books(df: pd.DataFrame, ts: str) -> List[dict]:
-    """Books — keep only passage_key relevant fields."""
+    """
+    books_processed:
+    - book_id = books.id (UUID)
+    - everything else as-is
+    """
     records = []
     for _, row in df.iterrows():
         try:
-            gutenberg_id = str(row.get("gutenberg_id", ""))
-            title        = str(row.get("book_title", ""))
-
-            if gutenberg_id and gutenberg_id not in ("", "None", "nan"):
-                book_id = make_book_id(gutenberg_id)
-            else:
-                book_id = str(row.get("passage_id", ""))
-
             records.append({
-                "book_id":      book_id,
-                "passage_id":   str(row.get("passage_id", "")),
-                "book_title":   title,
-                "book_author":  str(row.get("book_author", "")),
-                "gutenberg_id": gutenberg_id,
-                "epub_url":     str(row.get("epub_url", "")),
-                "text_url":     str(row.get("text_url", "")),
-                "timestamp":    ts,
+                "book_id":        str(row.get("book_id", "")),
+                "book_title":     str(row.get("book_title", "")),
+                "book_author":    str(row.get("book_author", "")),
+                "year":           row.get("year", None),
+                "gutenberg_id":   str(row.get("gutenberg_id", "")),
+                "cover_url":      str(row.get("cover_url", "")),
+                "opening_passage":str(row.get("opening_passage", "")),
+                "epub_url":       str(row.get("epub_url", "")),
+                "text_url":       str(row.get("text_url", "")),
+                "timestamp":      ts,
             })
         except Exception as e:
             logger.error(f"Error processing book row: {e}")
@@ -299,17 +309,19 @@ def _process_books(df: pd.DataFrame, ts: str) -> List[dict]:
 
 
 def _process_users(df: pd.DataFrame, ts: str) -> List[dict]:
-    """Users — all columns from public.users table."""
+    """
+    users_processed:
+    - user_id = users.id (UUID, same as moments.user_id — NO hashing)
+    - all other columns as-is
+    """
     records = []
     for _, row in df.iterrows():
         try:
             records.append({
-                "user_id":                str(row.get("user_id", "")),        # hashed from firebase_uid
-                "id":                     str(row.get("id", "")),             # original UUID
+                "user_id":                str(row.get("user_id", "")),
                 "firebase_uid":           str(row.get("firebase_uid", "")),
                 "first_name":             str(row.get("first_name", "")),
                 "last_name":              str(row.get("last_name", "")),
-                "email":                  str(row.get("email", "")),
                 "readername":             str(row.get("readername", "")),
                 "bio":                    str(row.get("bio", "")),
                 "gender":                 str(row.get("gender", "")),

@@ -1,8 +1,7 @@
 """
 bq_writer.py — Write processed data to BigQuery
 =================================================
-Writes moments, books, users to:
-  moment-486719.new_moments_processed.*
+All tables → WRITE_APPEND (always add new, never delete existing)
 """
 
 import logging
@@ -18,9 +17,10 @@ BQ_PROJECT = os.environ.get("GOOGLE_CLOUD_PROJECT", "moment-486719")
 BQ_DATASET = os.environ.get("BQ_DATASET", "new_moments_processed")
 
 TABLE_MAP = {
-    "moments": "moments_processed",
-    "books":   "books_processed",
-    "users":   "users_processed",
+    "moments":  "moments_processed",
+    "passages": "passages_processed",
+    "books":    "books_processed",
+    "users":    "users_processed",
 }
 
 
@@ -33,28 +33,30 @@ def _write(client, df: pd.DataFrame, table_name: str) -> str:
     job = client.load_table_from_dataframe(
         df, table_id,
         job_config=bigquery.LoadJobConfig(
-            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
             autodetect=True,
         )
     )
     job.result()
-    logger.info(f"  ✓ {len(df)} rows → {table_id}")
+    logger.info(f"  ✓ {len(df)} rows appended → {table_id}")
     return table_id
 
 
 def write_to_bq(
-    moments: List[dict],
-    books:   List[dict],
-    users:   List[dict],
+    moments:  List[dict],
+    passages: List[dict],
+    books:    List[dict],
+    users:    List[dict],
 ) -> List[str]:
-    """
-    Write all three processed datasets to BQ.
-    Returns list of table IDs written.
-    """
-    client    = _get_client()
-    written   = []
+    client  = _get_client()
+    written = []
 
-    for data, key in [(moments, "moments"), (books, "books"), (users, "users")]:
+    for data, key in [
+        (moments,  "moments"),
+        (passages, "passages"),
+        (books,    "books"),
+        (users,    "users"),
+    ]:
         if not data:
             logger.warning(f"  Skipping {key} — empty")
             continue

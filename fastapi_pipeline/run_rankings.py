@@ -182,7 +182,7 @@ def rerank_for_user(
 
         ranked.append({
             "run_id":       int(rid),
-            "match_user":   int(match_user) if match_user else 0,
+            "match_user": str(match_user) if match_user else "",
             "verdict":      run.get("dominant_think", ""),
             "confidence":   confidence,
             "bt_score":     round(bt_scores.get(rid, 0.0), 6),
@@ -297,7 +297,7 @@ def refit_user(
                 f"AND book_id = '{b_id}' AND passage_id = '{p_id}'"
             ).result()
         except Exception as e:
-            if "streaming buffer" in str(e).lower():
+            if "streaming buffer" in str(e).lower() or "truncated" in str(e).lower():
                 print(f"[BT] streaming buffer active for {user_id}/{b_id}/{p_id}, skipping delete")
             else:
                 raise
@@ -306,7 +306,7 @@ def refit_user(
         for pos, r in enumerate(ranked, 1):
             wu = r.pop("weights_used", {})
             rows_to_insert.append({
-                "user_id":       int(user_id),
+                "user_id":       str(user_id),
                 "book_id":       b_id,
                 "passage_id":    p_id,
                 "rank_position": pos,
@@ -382,7 +382,7 @@ def main():
             for pos, r in enumerate(ranked, 1):
                 wu = r.pop("weights_used", {})
                 all_rows.append({
-                    "user_id":       int(user_id),
+                    "user_id":       str(user_id),
                     "book_id":       book_id,
                     "passage_id":    passage_id,
                     "rank_position": pos,
