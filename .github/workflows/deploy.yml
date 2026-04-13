@@ -55,6 +55,7 @@ jobs:
             --platform managed \
             --allow-unauthenticated \
             --project $PROJECT_ID \
+            --timeout=3600 \ 
             --service-account 329431711809-compute@developer.gserviceaccount.com \
             --vpc-connector=momento-connector \
             --vpc-egress=private-ranges-only \
