@@ -277,4 +277,4 @@ def _refit_and_save_rankings(
     k:          int = 5,
 ) -> None:
     """Thin wrapper — delegates all BT logic to run_rankings.refit_user()."""
-    refit_user(user_id, book_id=book_id, passage_id=passage_id, k=k)
+    refit_user(user_id, book_id=book_id, passage_id=passage_id, k=k)# test
