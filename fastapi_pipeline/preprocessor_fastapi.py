@@ -158,6 +158,41 @@ def detect_issues(text):
 }
 
 
+# ── Prompt injection detection ───────────────────────────────────────────────
+
+_INJECTION_PATTERNS = [
+    # instruction override
+    r"ignore\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|context|rules?)",
+    r"disregard\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|context|rules?)",
+    r"forget\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|context|rules?)",
+    r"do\s+not\s+follow\s+(the\s+)?(previous|prior|above|earlier)\s+(instructions?|rules?)",
+    r"new\s+instructions?\s*:",
+    r"your\s+(new\s+)?(instructions?|objective|goal|task|purpose|role)\s+(is|are)\s*:",
+    # role / persona hijack
+    r"you\s+are\s+now\s+[a-z]",
+    r"act\s+as\s+(a\s+|an\s+)?[a-z]",
+    r"pretend\s+(you\s+are|to\s+be)\s+[a-z]",
+    r"(developer|jailbreak|unrestricted|dan)\s+mode",
+    r"\bDAN\b",
+    # system prompt impersonation
+    r"(^|\n)\s*system\s*:",
+    r"(^|\n)\s*###\s*(instruction|system|prompt)",
+    r"<\|im_start\|>",
+    r"\[INST\]",
+    r"(^|\n)\s*(USER|ASSISTANT|HUMAN|AI)\s*:",
+]
+
+_INJECTION_RE = re.compile(
+    "|".join(_INJECTION_PATTERNS),
+    re.IGNORECASE | re.MULTILINE,
+)
+
+def has_prompt_injection(text: str) -> bool:
+    if not text:
+        return False
+    return bool(_INJECTION_RE.search(text))
+
+
 # ── Metrics ───────────────────────────────────────────────────────────────────
 
 def calculate_metrics(text):
@@ -227,10 +262,30 @@ def _process_moments(df: pd.DataFrame, ts: str) -> Tuple[List[dict], List[dict]]
             passage    = str(row.get("passage", ""))
             raw_text   = str(row.get("interpretation", ""))
 
-            cleaned    = clean_text(raw_text)
+            cleaned = clean_text(raw_text)
+
+            if has_prompt_injection(cleaned):
+                logger.warning(
+                    f"Prompt injection detected — skipping moment_id={moment_id} user_id={user_id}"
+                )
+                continue
+
             validation = validate_text(cleaned)
             issues     = detect_issues(cleaned)
             metrics    = calculate_metrics(cleaned)
+
+            if not validation["is_valid"]:
+                logger.warning(f"Invalid text — skipping moment_id={moment_id}: {validation['quality_issues']}")
+                continue
+            if issues["has_pii"]:
+                logger.warning(f"PII detected — skipping moment_id={moment_id}: {issues['pii_types']}")
+                continue
+            if issues["has_profanity"]:
+                logger.warning(f"Profanity detected — skipping moment_id={moment_id}")
+                continue
+            if issues["is_spam"]:
+                logger.warning(f"Spam detected — skipping moment_id={moment_id}: {issues['spam_reasons']}")
+                continue
 
             # ── moments_processed ────────────────────────────────
             moments.append({
@@ -286,10 +341,17 @@ def _process_books(df: pd.DataFrame, ts: str) -> List[dict]:
     - everything else as-is
     """
     records = []
+    seen_books = set()
     for _, row in df.iterrows():
         try:
+            book_id = str(row.get("book_id", ""))
+            if book_id and book_id in seen_books:
+                logger.warning(f"Duplicate book_id — skipping book_id={book_id}")
+                continue
+            if book_id:
+                seen_books.add(book_id)
             records.append({
-                "book_id":        str(row.get("book_id", "")),
+                "book_id":        book_id,
                 "book_title":     str(row.get("book_title", "")),
                 "book_author":    str(row.get("book_author", "")),
                 "year":           row.get("year", None),
@@ -315,10 +377,17 @@ def _process_users(df: pd.DataFrame, ts: str) -> List[dict]:
     - all other columns as-is
     """
     records = []
+    seen_users = set()
     for _, row in df.iterrows():
         try:
+            user_id = str(row.get("user_id", ""))
+            if user_id and user_id in seen_users:
+                logger.warning(f"Duplicate user_id — skipping user_id={user_id}")
+                continue
+            if user_id:
+                seen_users.add(user_id)
             records.append({
-                "user_id":                str(row.get("user_id", "")),
+                "user_id":                user_id,
                 "firebase_uid":           str(row.get("firebase_uid", "")),
                 "first_name":             str(row.get("first_name", "")),
                 "last_name":              str(row.get("last_name", "")),
