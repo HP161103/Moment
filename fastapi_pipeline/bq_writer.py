@@ -2,6 +2,7 @@
 bq_writer.py — Write processed data to BigQuery
 =================================================
 All tables → WRITE_APPEND (always add new, never delete existing)
+Books → deduplicated against existing BQ rows before writing
 """
 
 import logging
@@ -50,6 +51,17 @@ def write_to_bq(
 ) -> List[str]:
     client  = _get_client()
     written = []
+
+    # ── Deduplicate books against existing BQ rows ─────────────
+    try:
+        existing = client.query(
+            f"SELECT DISTINCT book_id FROM `{BQ_PROJECT}.{BQ_DATASET}.books_processed`"
+        ).result()
+        existing_ids = {row.book_id for row in existing}
+        books = [b for b in books if b["book_id"] not in existing_ids]
+        logger.info(f"  Books after dedup: {len(books)} new")
+    except Exception as e:
+        logger.warning(f"  Could not deduplicate books (writing all): {e}")
 
     for data, key in [
         (moments,  "moments"),
