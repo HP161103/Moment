@@ -19,6 +19,7 @@ Other endpoints:
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional
 
@@ -290,6 +291,13 @@ async def retrain_trigger(payload: dict, background_tasks: BackgroundTasks):
 
 # ── Background: batch compatibility ──────────────────────────────────────────
 
+# Max parallel Gemini calls per user batch.
+# Each worker fires up to 2 Gemini requests (decompose + score), so
+# MAX_COMPAT_WORKERS=8 means up to 16 simultaneous API calls.
+# Tune down if you hit Gemini rate limits (HTTP 429s in the logs).
+MAX_COMPAT_WORKERS = 8
+
+
 def _run_batch_compatibility(
     user_id:        str,
     book_id:        str,
@@ -298,13 +306,19 @@ def _run_batch_compatibility(
 ) -> None:
     """
     Run compatibility between one processed moment and every existing BQ user
-    on the same passage. Runs rankings refit for this user once all compat
-    runs are complete.
+    on the same passage — in parallel using ThreadPoolExecutor.
+
+    Work is I/O-bound (Gemini API + BigQuery), so threads give real speedup:
+    N matches that took N×~4s sequentially now take ~4s regardless of N
+    (up to MAX_COMPAT_WORKERS concurrent pairs).
 
     Only matches against users already in BQ — moments ingested in the same
     pipeline run are excluded (get_moments_for_passage uses exclude_user_id,
     and BQ is written before this task starts so same-batch users will appear,
     but passage-level deduplication in the compat agent handles exact pairs).
+
+    BQ streaming insert (log_compat_run) is thread-safe — each call is an
+    independent HTTP request, no shared state.
     """
     logger.info(f"[Compat] starting batch for {user_id} on {book_id}/{passage_id}")
 
@@ -318,40 +332,56 @@ def _run_batch_compatibility(
         logger.info(f"[Compat] no other users on passage {passage_id} — skipping")
         return
 
-    logger.info(f"[Compat] running {len(other_moments)} comparisons for {user_id}")
-    compat_runs_count = 0
-    compat_errors     = 0
+    logger.info(
+        f"[Compat] running {len(other_moments)} comparisons for {user_id} "
+        f"(parallel, max_workers={MAX_COMPAT_WORKERS})"
+    )
 
-    for other in other_moments:
+    def _run_one(other: dict):
+        """Run a single compat pair. Returns (other_user_id, result_dict)."""
         other_user_id = str(other["user_id"])
         other_text    = other.get("cleaned_interpretation", "")
         if not other_text:
-            continue
+            return other_user_id, None
+        result = run_compatibility_agent(
+            user_a_id=user_id,
+            user_b_id=other_user_id,
+            book_id=book_id,
+            moment_a={"passage_id": passage_id, "cleaned_interpretation": interpretation},
+            moment_b={"passage_id": passage_id, "cleaned_interpretation": other_text},
+        )
+        return other_user_id, result
 
-        try:
-            result = run_compatibility_agent(
-                user_a_id=user_id,
-                user_b_id=other_user_id,
-                book_id=book_id,
-                moment_a={"passage_id": passage_id, "cleaned_interpretation": interpretation},
-                moment_b={"passage_id": passage_id, "cleaned_interpretation": other_text},
-            )
-            if "error" in result:
-                logger.warning(f"[Compat] error {user_id}×{other_user_id}: {result['error']}")
+    compat_runs_count = 0
+    compat_errors     = 0
+
+    with ThreadPoolExecutor(max_workers=MAX_COMPAT_WORKERS) as executor:
+        futures = {executor.submit(_run_one, other): other for other in other_moments}
+
+        for future in as_completed(futures):
+            try:
+                other_user_id, result = future.result()
+                if result is None:
+                    pass  # empty interpretation, already skipped inside _run_one
+                elif "error" in result:
+                    logger.warning(f"[Compat] error {user_id}×{other_user_id}: {result['error']}")
+                    compat_errors += 1
+                else:
+                    compat_runs_count += 1
+                    # Update rolling verdict ratio gauges
+                    dt = result.get("dominant_think", "")
+                    df = result.get("dominant_feel", "")
+                    if dt in ("resonate", "contradict", "diverge"):
+                        compat_think_ratio.labels(dt).inc()
+                    if df in ("resonate", "contradict", "diverge"):
+                        compat_feel_ratio.labels(df).inc()
+                    logger.info(
+                        f"[Compat] ✓ {user_id}×{other_user_id}: "
+                        f"{dt} ({result.get('confidence')})"
+                    )
+            except Exception as e:
+                logger.error(f"[Compat] exception in future: {e}")
                 compat_errors += 1
-            else:
-                compat_runs_count += 1
-                # Update rolling verdict ratio gauges (approximation: set to this run's verdict)
-                dt = result.get("dominant_think", "")
-                df = result.get("dominant_feel", "")
-                if dt in ("resonate", "contradict", "diverge"):
-                    compat_think_ratio.labels(dt).inc()
-                if df in ("resonate", "contradict", "diverge"):
-                    compat_feel_ratio.labels(df).inc()
-                logger.info(f"[Compat] ✓ {user_id}×{other_user_id}: {dt} ({result.get('confidence')})")
-        except Exception as e:
-            logger.error(f"[Compat] exception {user_id}×{other_user_id}: {e}")
-            compat_errors += 1
 
     logger.info(f"[Compat] complete for {user_id} — {compat_runs_count} runs, {compat_errors} errors")
 

@@ -13,10 +13,10 @@ Env vars required:
 """
 
 import os
-import numpy as np
+import numpy as np # type: ignore
 from collections import defaultdict
 from datetime import datetime
-from scipy.optimize import minimize
+from scipy.optimize import minimize # type: ignore
 from google.cloud import bigquery
 from aggregator import aggregate_book_level, aggregate_profile_level
 from tools import get_passage_results_for_user, save_book_level, save_profile_level
