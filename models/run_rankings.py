@@ -182,7 +182,7 @@ def rerank_for_user(
 
         ranked.append({
             "run_id":       int(rid),
-            "match_user":   int(match_user) if match_user else 0,
+            "match_user":   str(match_user) if match_user else 0,
             "verdict":      run.get("dominant_think", ""),
             "confidence":   confidence,
             "bt_score":     round(bt_scores.get(rid, 0.0), 6),
