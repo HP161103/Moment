@@ -16,6 +16,8 @@ import pandas as pd
 import textstat
 from langdetect import detect, LangDetectException
 
+from metrics import moments_processed
+
 logger = logging.getLogger(__name__)
 
 CFG = {
@@ -268,6 +270,7 @@ def _process_moments(df: pd.DataFrame, ts: str) -> Tuple[List[dict], List[dict]]
                 logger.warning(
                     f"Prompt injection detected — skipping moment_id={moment_id} user_id={user_id}"
                 )
+                moments_processed.labels("skipped_injection").inc()
                 continue
 
             validation = validate_text(cleaned)
@@ -276,15 +279,19 @@ def _process_moments(df: pd.DataFrame, ts: str) -> Tuple[List[dict], List[dict]]
 
             if not validation["is_valid"]:
                 logger.warning(f"Invalid text — skipping moment_id={moment_id}: {validation['quality_issues']}")
+                moments_processed.labels("skipped_invalid").inc()
                 continue
             if issues["has_pii"]:
                 logger.warning(f"PII detected — skipping moment_id={moment_id}: {issues['pii_types']}")
+                moments_processed.labels("skipped_pii").inc()
                 continue
             if issues["has_profanity"]:
                 logger.warning(f"Profanity detected — skipping moment_id={moment_id}")
+                moments_processed.labels("skipped_profanity").inc()
                 continue
             if issues["is_spam"]:
                 logger.warning(f"Spam detected — skipping moment_id={moment_id}: {issues['spam_reasons']}")
+                moments_processed.labels("skipped_spam").inc()
                 continue
 
             # ── moments_processed ────────────────────────────────
@@ -316,6 +323,7 @@ def _process_moments(df: pd.DataFrame, ts: str) -> Tuple[List[dict], List[dict]]
                 "created_at":             str(row.get("created_at", "")),
                 "timestamp":              ts,
             })
+            moments_processed.labels("valid").inc()
 
             # ── passages_processed (deduplicated by passage_id) ──
             if passage_id and passage_id not in seen_passages:

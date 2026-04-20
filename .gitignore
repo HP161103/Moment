@@ -149,3 +149,21 @@ dmypy.json
 gcs-service-account.json
 google-cloud-sdk/
 google-cloud-cli-*.tar.gz
+
+
+# Logs
+moment_pipeline_logs/
+*.log
+pipeline_ALL.log
+team_pipeline_ALL.log
+
+# Virtual environments
+venv/
+fastapi_pipeline/venv/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Credentials at root
+gcs-service-account.json

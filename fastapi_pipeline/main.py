@@ -18,9 +18,11 @@ Other endpoints:
 
 import logging
 import os
+import time
 from datetime import datetime
 from typing import Optional
 
+import numpy as np
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
@@ -30,6 +32,20 @@ from preprocessor_fastapi import preprocess_all
 from bq_writer import write_to_bq
 from tools import get_moments_for_passage, insert_comparison, get_rankings
 from run_rankings import refit_user
+from metrics import (
+    pipeline_runs,
+    pipeline_duration,
+    compat_think_ratio,
+    compat_feel_ratio,
+    valid_ratio,
+    word_count_mean,
+    word_count_p50,
+    word_count_p95,
+    quality_score_mean,
+    quality_score_p10,
+    readability_mean,
+    push_metrics_now,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,6 +57,38 @@ app = FastAPI(
 )
 
 _last_run: dict = {}
+
+
+# ── Distribution gauges helper ────────────────────────────────────────────────
+
+def _update_distribution_gauges(moments: list, compat_results: list, run_id: str) -> None:
+    """
+    Compute per-run distribution statistics and write them to Cloud Monitoring Gauges.
+    Called synchronously after preprocessing, before background tasks start.
+    """
+    if not moments:
+        return
+
+    wcs = np.array([m["word_count"]       for m in moments if m.get("word_count") is not None], dtype=float)
+    qs  = np.array([m["quality_score"]    for m in moments if m.get("quality_score") is not None], dtype=float)
+    rs  = np.array([m["readability_score"]for m in moments if m.get("readability_score") is not None], dtype=float)
+
+    total       = len(moments)
+    valid_count = sum(1 for m in moments if m.get("is_valid"))
+
+    valid_ratio.labels(run_id).set(valid_count / max(total, 1))
+
+    if len(wcs):
+        word_count_mean.labels(run_id).set(float(np.mean(wcs)))
+        word_count_p50.labels(run_id).set(float(np.percentile(wcs, 50)))
+        word_count_p95.labels(run_id).set(float(np.percentile(wcs, 95)))
+
+    if len(qs):
+        quality_score_mean.labels(run_id).set(float(np.mean(qs)))
+        quality_score_p10.labels(run_id).set(float(np.percentile(qs, 10)))
+
+    if len(rs):
+        readability_mean.labels(run_id).set(float(np.mean(rs)))
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -69,9 +117,11 @@ def run_pipeline(background_tasks: BackgroundTasks):
     Compatibility and rankings run in the background per valid moment.
     """
     global _last_run
-    start = datetime.utcnow()
+    start    = datetime.utcnow()
+    run_id   = start.isoformat()
+    t_full   = time.monotonic()
     logger.info("=" * 60)
-    logger.info(f"Pipeline run started at {start.isoformat()}")
+    logger.info(f"Pipeline run started at {run_id}")
 
     # ── Step 1: Load from Cloud SQL ───────────────────────────────
     logger.info("Step 1/3: Loading today's moments from Cloud SQL...")
@@ -81,11 +131,14 @@ def run_pipeline(background_tasks: BackgroundTasks):
         dfs = loader.get_dataframes()
     except Exception as e:
         logger.error(f"Cloud SQL load failed: {e}")
+        pipeline_runs.labels("error").inc()
         raise HTTPException(status_code=500, detail=f"Cloud SQL load failed: {str(e)}")
 
     new_count = len(dfs["moments_raw"])
     if new_count == 0:
         logger.info("No moments created today — pipeline skipped")
+        pipeline_runs.labels("skipped").inc()
+        pipeline_duration.labels("full").observe(time.monotonic() - t_full)
         return {
             "status":       "skipped",
             "reason":       "no moments created today",
@@ -96,6 +149,7 @@ def run_pipeline(background_tasks: BackgroundTasks):
 
     # ── Step 2: Preprocess ────────────────────────────────────────
     logger.info("Step 2/3: Preprocessing...")
+    t_prep = time.monotonic()
     try:
         moments, passages, books, users = preprocess_all(
             moments_df=dfs["moments_raw"],
@@ -104,20 +158,28 @@ def run_pipeline(background_tasks: BackgroundTasks):
         )
     except Exception as e:
         logger.error(f"Preprocessing failed: {e}")
+        pipeline_runs.labels("error").inc()
         raise HTTPException(status_code=500, detail=f"Preprocessing failed: {str(e)}")
+    pipeline_duration.labels("preprocess").observe(time.monotonic() - t_prep)
 
     valid_moments = [m for m in moments if m.get("is_valid", False)]
     logger.info(f"  {len(moments)} processed ({len(valid_moments)} valid)")
 
     # ── Step 3: Write to BQ ───────────────────────────────────────
     logger.info("Step 3/3: Writing to BQ...")
+    t_bq = time.monotonic()
     try:
         bq_tables = write_to_bq(moments, passages, books, users)
     except Exception as e:
         logger.error(f"BQ write failed: {e}")
+        pipeline_runs.labels("error").inc()
         raise HTTPException(status_code=500, detail=f"BQ write failed: {str(e)}")
+    pipeline_duration.labels("bq_write").observe(time.monotonic() - t_bq)
 
     logger.info("Synchronous steps complete. Queuing compatibility + rankings in background.")
+
+    # ── Update distribution gauges (data drift signals) ──────────
+    _update_distribution_gauges(moments, [], run_id)
 
     # ── Steps 4+5: Compatibility + Rankings (background) ─────────
     # Each valid moment is matched independently against existing BQ users.
@@ -138,6 +200,9 @@ def run_pipeline(background_tasks: BackgroundTasks):
         )
 
     duration = (datetime.utcnow() - start).total_seconds()
+    pipeline_runs.labels("success").inc()
+    pipeline_duration.labels("full").observe(time.monotonic() - t_full)
+    push_metrics_now()   # flush to Cloud Monitoring before Cloud Run may shut down
     logger.info(f"Pipeline synchronous phase complete in {duration:.2f}s")
     logger.info("=" * 60)
 
