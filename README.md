@@ -209,11 +209,6 @@ Moment/
 
 ## 3. Dataset Overview
 
-### Why Synthetic Data?
-
-Moment's core privacy principle is that user interpretations never leave the local system. Using real user data for model training would violate that promise. Synthetic data designed to reflect authentic human reading patterns lets us build and validate the full ML pipeline while preserving privacy by design.
-
-### Dataset
 
 | Property | Value |
 |---|---|
@@ -239,6 +234,49 @@ All books are public domain (pre-1928), sourced from [Project Gutenberg](https:/
 Each interpretation record contains: `user_id`, `book_id`, `passage_id`, `interpretation` (the raw moment text), `word_count`, `character_name`, `gender`, `readership_type`, `created_at`. The bias-free version was produced by running the data through the bias detection pipeline and removing records that over-represented any demographic slice.
 
 ---
+
+## 3.1 Application Layer - Frontend
+
+Location: frontend/
+
+The Moment frontend is a JavaScript + JSX application served via Nginx, built without a framework bundler — all JSX is compiled via a custom build script (scripts/build-v64.js) into src/app.compiled.js. The app uses Firebase Authentication for sign-in (email/password and Google OAuth) and communicates with the backend API using Bearer token headers.
+
+The UI is structured around four panels navigated via a rotating cube metaphor (CubeHint):
+
+Read (src/features/read/) — renders book text fetched from Project Gutenberg. Users drag-select a passage to "snip" it, triggering a SnipOverlay that captures the highlighted text as a new moment.
+
+Moments (src/features/moments/) — displays the user's saved moments grouped by book. Each moment can have an interpretation written against it. Supports two layout modes (clip-by-books, grid) and passage-first or interpretation-first display ordering.
+
+Worth (src/features/worth/) — shows compatible readers fetched from the backend, displaying Think/Feel R/C/D breakdowns per match. Pulls from /worth/matches, /worth/rankings, /worth/book-compatibility, and /worth/profile-compatibility endpoints and renders the scores as bar charts via charting.jsx.
+
+Sharing (src/features/sharing/) — a close-readers feed showing waves, whispers, and shared moments between users the current reader has connected with.
+
+The app also includes a full onboarding flow (OnboardingStageTrack, ReaderOnboardingOverlay, ConsentScreen) and a profile drawer (ProfileDrawer) with dark mode support. All authentication state is managed in MomentApp.jsx via Firebase's onAuthStateChanged.
+
+Containerized via Dockerfile.frontend and served behind Nginx (nginx.conf) for production deployment.
+
+## 3.2 Application Layer - Backend
+
+
+The backend is a FastAPI application (api/main.py, version 1.0.0) backed by an async PostgreSQL connection via SQLAlchemy (asyncpg driver). It handles all user-facing data operations and acts as the bridge between the frontend, Cloud SQL, and the ML pipeline.
+
+Database schema (schema.sql): PostgreSQL with tables for users, books, moments, reading_signatures, close_readers, waves, whispers, and shared_moments. UUIDs are used as primary keys throughout, and firebase_uid is the foreign key that links Firebase Auth users to the database.
+
+Routes:
+
+POST /users / GET /users/me / PATCH /users/me/preferences — user creation, profile retrieval, and preference updates (dark mode, reading state, onboarding progress, shelf management). Supports both email/password and Google OAuth sign-in flows.
+
+GET /moments / POST /moments / PATCH /moments/{id} / DELETE /moments/{id} — full CRUD for moments. On every POST /moments, a passage_key is computed (SHA-256 of book_id + passage[:200]) for stable cross-user passage matching, and the ML pipeline is triggered via a fire-and-forget async POST to POST /pipeline/run — the moment is saved regardless of whether the pipeline call succeeds.
+
+GET /worth/matches — fetches compatibility results from BigQuery (compatibility_results table), joining against users_processed for reader names, then enriches with book titles from Cloud SQL.
+
+GET /worth/rankings — proxies to GET /rankings/{user_id} on the FastAPI ML pipeline (Cloud Run), triggering a live BT refit.
+
+GET /worth/book-compatibility / GET /worth/profile-compatibility — reads from book_compatibility and profile_compatibility BigQuery tables for aggregated match scores.
+
+GET /sharing/close-readers / POST /sharing/wave / GET /sharing/whispers / POST /sharing/shared-moments — manages the social layer between connected readers.
+
+Authentication (api/auth.py) verifies Firebase ID tokens on every request via firebase_admin. Migrations run automatically at startup via the lifespan context manager, adding any missing columns to the users table without requiring a manual migration step
 
 ## 4. System Architecture
 
